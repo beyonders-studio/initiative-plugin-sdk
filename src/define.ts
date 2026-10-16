@@ -355,6 +355,70 @@ export interface ListingDeclaration {
    * most 512 characters. A container plug-in's only.
    */
   compose?: { service: string; baseUrl: string };
+  /**
+   * What a deployment needs to run the container on its own, without code of
+   * its own for it. A container plug-in's only, and only in a package somebody
+   * reviewed: the public registry refuses a listing that carries one. It holds
+   * nothing that raises a privilege; resources, network rules, hostnames and
+   * every key stay the deployment's. See {@link RuntimeDeclaration}.
+   */
+  runtime?: RuntimeDeclaration;
+}
+
+/** What the deployment fills a {@link RuntimeDeclaration.facts} variable with. */
+export type RuntimeFact =
+  /** Initiative's public URL. */
+  | "app_url"
+  /** Initiative's public origin. */
+  | "app_origin"
+  /** Initiative's API, as outside callers reach it. */
+  | "app_api_public"
+  /** Initiative's API, from inside the deployment. */
+  | "app_api_internal"
+  /** This plug-in's own origin, where it serves framed pages (needs `pages`). */
+  | "page_origin"
+  /** The port below. */
+  | "port";
+
+export interface RuntimeDeclaration {
+  /** Its short name in a deployment: a DNS label of at most 20 characters, unique in a package. */
+  name: string;
+  /** The port it serves HTTP on, 1024 or higher. */
+  port: number;
+  health: { ready: string; live: string; startupSeconds?: number };
+  /** How long it needs to drain after SIGTERM, 5 to 300 seconds. */
+  stopGraceSeconds?: number;
+  /** It changes its database schema as it starts, so two copies never start together. */
+  migratesOnStart?: boolean;
+  /** It serves pages Initiative frames, at an origin of its own. */
+  pages?: boolean;
+  /** Paths outside callers reach on the deployment's shared plug-in host. */
+  publicPaths?: string[];
+  /** Environment variables the deployment fills with what it knows of itself. */
+  facts?: Record<string, RuntimeFact>;
+  /** Environment variables only the operator fills, by name. */
+  settings?: Array<{ env: string; required?: boolean }>;
+  /** Where the private key its copy signs with goes. */
+  signingKey?: { env: string };
+  /**
+   * Its own Postgres. The deployment runs it, backs it up, and gives each role
+   * a login; `provisionSql`, a file in the image, creates them, given each
+   * role's password as the psql variable `<id>_password`.
+   */
+  database?: {
+    minMajor?: number;
+    dsnScheme?: "postgresql" | "postgresql+asyncpg" | "postgresql+psycopg" | "postgres";
+    roles: Array<{ id: string; login: string; env: string }>;
+    provisionSql: string;
+  };
+  /** Values the deployment generates once and keeps. */
+  secrets?: Array<{ id: string; kind: "random_alnum_32" | "random_bytes_32" | "hex_32" | "rsa_private_key_pem"; env: string }>;
+  metrics?: { path: string; tokenEnv: string };
+  /** Shared secrets with Initiative's own services, honoured for a deployment's own publishers only. */
+  integrations?: {
+    billing?: { hmacEnv: string; hmacPreviousEnv?: string; publicKeyEnv: string };
+    bundledChannel?: { env: string };
+  };
 }
 
 export interface PluginDefinition<E, W> {

@@ -238,6 +238,71 @@ describe("the registry source", () => {
     expect(existsSync(join(root, "manifest.json"))).toBe(false);
   });
 
+  it("carries the listing's runtime in the registry's spelling, variable names untouched", async () => {
+    const runtime = `runtime: {
+      name: "tracker",
+      port: 8200,
+      health: { ready: "/readyz", live: "/healthz", startupSeconds: 120 },
+      migratesOnStart: true,
+      pages: true,
+      facts: { APP_ORIGIN: "page_origin", INITIATIVE_API_URL: "app_api_internal" },
+      settings: [{ env: "TRACKER_MODE", required: true }],
+      signingKey: { env: "TRACKER_PRIVATE_KEY_PEM" },
+      database: {
+        dsnScheme: "postgresql+asyncpg",
+        roles: [{ id: "owner", login: "tracker_owner", env: "OWNER_DATABASE_URL" }],
+        provisionSql: "/app/provision.sql",
+      },
+      secrets: [{ id: "session-key", kind: "rsa_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
+      metrics: { path: "/metrics", tokenEnv: "METRICS_TOKEN" },
+      integrations: { billing: { hmacEnv: "BILLING_HMAC", publicKeyEnv: "BILLING_PUBLIC_KEY_PEM" } },
+    },`;
+    write({ "src/plugin.ts": plugin("", runtime) });
+    expect(await run({ registry: "registry" })).toBe(0);
+    const listing = JSON.parse(
+      readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8")
+    );
+    expect(listing.registration.runtime).toEqual({
+      name: "tracker",
+      port: 8200,
+      health: { ready: "/readyz", live: "/healthz", startup_seconds: 120 },
+      migrates_on_start: true,
+      pages: true,
+      facts: { APP_ORIGIN: "page_origin", INITIATIVE_API_URL: "app_api_internal" },
+      settings: [{ env: "TRACKER_MODE", required: true }],
+      signing_key: { env: "TRACKER_PRIVATE_KEY_PEM" },
+      database: {
+        dsn_scheme: "postgresql+asyncpg",
+        roles: [{ id: "owner", login: "tracker_owner", env: "OWNER_DATABASE_URL" }],
+        provision_sql: "/app/provision.sql",
+      },
+      secrets: [{ id: "session-key", kind: "rsa_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
+      metrics: { path: "/metrics", token_env: "METRICS_TOKEN" },
+      integrations: { billing: { hmac_env: "BILLING_HMAC", public_key_env: "BILLING_PUBLIC_KEY_PEM" } },
+    });
+  });
+
+  it("refuses a runtime the registry would refuse", async () => {
+    const runtime = `runtime: {
+      name: "Tracker",
+      port: 80,
+      health: { ready: "readyz", live: "/healthz" },
+      facts: { APP_ORIGIN: "page_origin", lower: "app_url" },
+      settings: [{ env: "APP_ORIGIN" }],
+      database: { roles: [], provisionSql: "provision.sh" },
+    },`;
+    write({ "src/plugin.ts": plugin("", runtime) });
+    expect(await run()).toBe(1);
+    const text = errors.join("");
+    expect(text).toContain("listing runtime: name is a DNS label");
+    expect(text).toContain("listing runtime: port is 1024 to 65535");
+    expect(text).toContain("listing runtime: readyz is not an absolute path");
+    expect(text).toContain("listing runtime: lower is not an environment variable name");
+    expect(text).toContain("listing runtime: APP_ORIGIN is filled twice");
+    expect(text).toContain("listing runtime: page_origin is a plug-in's own origin");
+    expect(text).toContain("listing runtime: database provisionSql is an absolute path");
+  });
+
   it("is left as it was between releases", async () => {
     write({ "package.json": JSON.stringify({ name: "tracker", version: "1.3.0" }) });
     expect(await run({ registry: "registry" })).toBe(0);
@@ -265,7 +330,7 @@ describe("a declarative plug-in", () => {
   it("refuses an image, and a container plug-in's listing without one", async () => {
     write({ "src/plugin.ts": declarative("{}", `image: "ghcr.io/acme/tracker@sha256:${"a".repeat(64)}"`) });
     expect(await run()).toBe(1);
-    expect(errors.join("")).toContain("listing: a declarative plug-in has no image or compose service");
+    expect(errors.join("")).toContain("listing: a declarative plug-in has no image, compose service or runtime");
     write({ "src/plugin.ts": plugin().replace(/image: .*\n/, "") });
     expect(await run()).toBe(1);
     expect(errors.join("")).toContain("listing: a container plug-in names its image");
