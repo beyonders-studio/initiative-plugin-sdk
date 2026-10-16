@@ -334,18 +334,6 @@ describe("the registry source", () => {
     expect(errors.join("")).toContain("listing runtime: INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM is filled twice");
   });
 
-  it("refuses the removed runtime integrations", async () => {
-    const runtime = `runtime: {
-      name: "tracker",
-      port: 8200,
-      health: { ready: "/readyz", live: "/healthz" },
-      integrations: { billing: { hmacEnv: "BILLING_HMAC", publicKeyEnv: "BILLING_PUBLIC_KEY_PEM" } },
-    },`;
-    write({ "src/plugin.ts": plugin("", runtime) });
-    expect(await run()).toBe(1);
-    expect(errors.join("")).toContain("listing.runtime.integrations was removed in 7.2");
-  });
-
   it("refuses a runtime the registry would refuse", async () => {
     const runtime = `runtime: {
       name: "Tracker",

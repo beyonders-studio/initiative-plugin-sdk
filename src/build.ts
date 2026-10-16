@@ -135,17 +135,9 @@ export async function compile(esbuild: Esbuild, root: string, entry: string): Pr
  */
 function retiredProblems(plugin: ListedPlugin): string[] {
   const listing = (plugin.listing ?? {}) as Record<string, unknown>;
-  const runtime = (listing.runtime ?? {}) as Record<string, unknown>;
-  return [
-    ...("referenceSectors" in listing
-      ? ["listing.referenceSectors was removed in 7.0: whether a plug-in is billable is a package's to state, not its listing's"]
-      : []),
-    ...("integrations" in runtime
-      ? [
-          "listing.runtime.integrations was removed in 7.2: billing reaches a plug-in only through Initiative, and its signed entitlement statements are verified with the entitlement_issuer_key fact",
-        ]
-      : []),
-  ];
+  return "referenceSectors" in listing
+    ? ["listing.referenceSectors was removed in 7.0: whether a plug-in is billable is a package's to state, not its listing's"]
+    : [];
 }
 
 /** The plug-in and its manifest, or every problem with them beside `problems`. */
