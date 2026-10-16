@@ -332,6 +332,14 @@ export interface ListingDeclaration {
   description?: string;
   /** The listing's picture, relative to the plug-in's package. */
   avatar: string;
+  /**
+   * Screenshots for the listing page, in order: at most 12, each a PNG, JPEG,
+   * WebP, GIF, AVIF or SVG file relative to the plug-in's package, with `alt`
+   * text of 1 to 300 characters describing it for someone who cannot see it.
+   * The registry signs each one, like the avatar. Only a registry listing
+   * carries them; `pack` leaves them out.
+   */
+  images?: Array<{ path: string; alt: string }>;
   version: string;
   /** The oldest Initiative release this version runs on. */
   minAppVersion?: string;

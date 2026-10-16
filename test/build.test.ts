@@ -238,6 +238,64 @@ describe("the registry source", () => {
     expect(existsSync(join(root, "manifest.json"))).toBe(false);
   });
 
+  it("carries the listing's screenshots, each signed by its digest with its alt text", async () => {
+    const board = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9]);
+    const detail = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>");
+    write({
+      "screens/board.png": board,
+      "screens/detail.svg": detail,
+      "src/plugin.ts": plugin(
+        "",
+        `images: [
+          { path: "screens/board.png", alt: "A board of open tickets" },
+          { path: "screens/detail.svg", alt: "One ticket, open" },
+        ],`
+      ),
+    });
+    expect(await run({ registry: "registry" })).toBe(0);
+    const source = join(root, "registry", "acme", "K7M2QX8N4TVB9C");
+    const listing = JSON.parse(readFileSync(join(source, "listing.json"), "utf-8"));
+    expect(listing.images).toEqual([
+      { path: "assets/board.png", sha256: digest(board), alt: "A board of open tickets" },
+      { path: "assets/detail.svg", sha256: digest(detail), alt: "One ticket, open" },
+    ]);
+    expect(readFileSync(join(source, "assets", "board.png"))).toEqual(board);
+    expect(readFileSync(join(source, "assets", "detail.svg"))).toEqual(detail);
+    expect(await run({ registry: "registry", check: true })).toBe(0);
+  });
+
+  it("names no images when the listing has none", async () => {
+    expect(await run({ registry: "registry" })).toBe(0);
+    const listing = JSON.parse(
+      readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8")
+    );
+    expect(listing).not.toHaveProperty("images");
+  });
+
+  it("refuses screenshots the registry would refuse", async () => {
+    const thirteen = Array.from({ length: 13 }, (_, n) => `{ path: "s/${n}.png", alt: "Shot ${n}" }`).join(", ");
+    write({ "src/plugin.ts": plugin("", `images: [${thirteen}],`) });
+    expect(await run()).toBe(1);
+    expect(errors.join("")).toContain("listing images: at most 12, not 13");
+
+    errors.length = 0;
+    write({
+      "src/plugin.ts": plugin(
+        "",
+        `images: [
+          { path: "screens/notes.txt", alt: "Notes" },
+          { path: "screens/board.png", alt: "" },
+          { path: "screens/avatar.png", alt: "Clashes with the avatar" },
+        ],`
+      ),
+    });
+    expect(await run()).toBe(1);
+    const text = errors.join("");
+    expect(text).toContain("listing images: screens/notes.txt is not a PNG, JPEG, WebP, GIF, AVIF or SVG file");
+    expect(text).toContain("listing images: screens/board.png needs alt text of 1 to 300 characters");
+    expect(text).toContain("listing images: screens/avatar.png has the same file name as another picture");
+  });
+
   it("is left as it was between releases", async () => {
     write({ "package.json": JSON.stringify({ name: "tracker", version: "1.3.0" }) });
     expect(await run({ registry: "registry" })).toBe(0);

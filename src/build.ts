@@ -7,10 +7,10 @@
  *   parse fails the build at its place in the manifest.
  * - With `--registry <dir>`, the plug-in's registry source under
  *   `<dir>/<publisher>/<uid>/`: `listing.json`, this version's
- *   `<version>/manifest.json` and the avatar. It is written only while the
- *   listing names the package's own version: between releases the package
- *   runs ahead of its listing, and what the listing already publishes is left
- *   as it was.
+ *   `<version>/manifest.json`, the avatar and any images. It is written
+ *   only while the listing names the package's own version: between releases
+ *   the package runs ahead of its listing, and what the listing already
+ *   publishes is left as it was.
  *
  * With `--check` nothing is written, and any file that differs from what would
  * be written is a failure.
@@ -134,6 +134,7 @@ function checked(plugin: ListedPlugin, manifest: Manifest, problems: string[]): 
   );
   problems.push(...kindProblems(plugin));
   if (plugin.listing?.compose) problems.push(...composeProblems(plugin.listing.compose));
+  if (plugin.listing?.images) problems.push(...imageProblems(plugin.listing));
   return problems.length ? { problems } : { plugin, manifest };
 }
 
@@ -163,11 +164,15 @@ export async function build(options: BuildOptions): Promise<number> {
         : listing.version;
     if (version === listing.version) {
       const avatar = readFileSync(resolve(root, listing.avatar));
+      const images = (listing.images ?? []).map((image) => readFileSync(resolve(root, image.path)));
       const source = resolve(root, options.registry, listing.publisher, plugin.uid);
       outputs.push(
-        [join(source, "listing.json"), `${JSON.stringify(listingSource(plugin, avatar), null, 2)}\n`],
+        [join(source, "listing.json"), `${JSON.stringify(listingSource(plugin, avatar, images), null, 2)}\n`],
         [join(source, listing.version, "manifest.json"), manifestText],
-        [join(source, "assets", basename(listing.avatar)), avatar]
+        [join(source, "assets", basename(listing.avatar)), avatar],
+        ...(listing.images ?? []).map(
+          (image, index): [string, Buffer] => [join(source, "assets", basename(image.path)), images[index]]
+        )
       );
     } else {
       process.stdout.write(`the registry source lists ${listing.version}; ${version} is listed at its release\n`);
@@ -273,8 +278,32 @@ function composeProblems({ service, baseUrl }: NonNullable<ListingDeclaration["c
   return problems;
 }
 
+const PICTURE = /\.(png|jpe?g|webp|gif|avif|svg)$/i;
+const MAX_IMAGES = 12;
+
+/**
+ * The registry's rules for a listing's screenshots: how many, their alt text,
+ * their file types, and a name of their own in the listing's `assets/`, where
+ * the avatar sits beside them.
+ */
+function imageProblems({ avatar, images = [] }: ListingDeclaration): string[] {
+  const problems: string[] = [];
+  if (images.length > MAX_IMAGES) problems.push(`listing images: at most ${MAX_IMAGES}, not ${images.length}`);
+  const names = new Set([basename(avatar)]);
+  for (const { path, alt } of images) {
+    if (!PICTURE.test(path)) problems.push(`listing images: ${path} is not a PNG, JPEG, WebP, GIF, AVIF or SVG file`);
+    if (typeof alt !== "string" || !alt.trim() || alt.length > 300) {
+      problems.push(`listing images: ${path} needs alt text of 1 to 300 characters`);
+    }
+    const name = basename(path);
+    if (names.has(name)) problems.push(`listing images: ${path} has the same file name as another picture`);
+    names.add(name);
+  }
+  return problems;
+}
+
 /** The registry source listing: what the catalogue shows, this version, and the registration, a container's or a declarative plug-in's. */
-function listingSource(plugin: ListedPlugin, avatar: Buffer): Record<string, unknown> {
+function listingSource(plugin: ListedPlugin, avatar: Buffer, images: Buffer[]): Record<string, unknown> {
   const listing = plugin.listing!;
   return {
     schema: 1,
@@ -289,6 +318,15 @@ function listingSource(plugin: ListedPlugin, avatar: Buffer): Record<string, unk
       path: `assets/${basename(listing.avatar)}`,
       sha256: createHash("sha256").update(avatar).digest("hex"),
     },
+    ...(listing.images?.length
+      ? {
+          images: listing.images.map((image, index) => ({
+            path: `assets/${basename(image.path)}`,
+            sha256: createHash("sha256").update(images[index]).digest("hex"),
+            alt: image.alt,
+          })),
+        }
+      : {}),
     versions: [
       {
         version: listing.version,
