@@ -31,7 +31,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { CAPS } from "./contract.js";
-import { manifestOf, type AnyPlugin, type ListingDeclaration } from "./define.js";
+import { manifestOf, type AnyPlugin, type ListingDeclaration, type RuntimeDeclaration } from "./define.js";
 import type { Manifest } from "./contract.js";
 import { validateManifest } from "./validate.js";
 
@@ -134,6 +134,7 @@ function checked(plugin: ListedPlugin, manifest: Manifest, problems: string[]): 
   );
   problems.push(...kindProblems(plugin));
   if (plugin.listing?.compose) problems.push(...composeProblems(plugin.listing.compose));
+  if (plugin.listing?.runtime) problems.push(...runtimeProblems(plugin.listing.runtime));
   return problems.length ? { problems } : { plugin, manifest };
 }
 
@@ -251,7 +252,9 @@ function kindProblems(plugin: ListedPlugin): string[] {
   if (plugin.hosts) {
     if (Object.keys(plugin.hooks ?? {}).length) problems.push("hooks: a declarative plug-in runs no hooks");
     if (plugin.scopes) problems.push("scopes: a declarative plug-in asks for none, since it does not call Initiative");
-    if (plugin.listing?.image || plugin.listing?.compose) problems.push("listing: a declarative plug-in has no image or compose service");
+    if (plugin.listing?.image || plugin.listing?.compose || plugin.listing?.runtime) {
+      problems.push("listing: a declarative plug-in has no image, compose service or runtime");
+    }
   } else if (plugin.listing && !plugin.listing.image) {
     problems.push("listing: a container plug-in names its image");
   }
@@ -269,6 +272,44 @@ function composeProblems({ service, baseUrl }: NonNullable<ListingDeclaration["c
   }
   if (baseUrl.length > 512 || !/^https?:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:\/[^\s?#]*)?$/.test(baseUrl)) {
     problems.push("listing compose: baseUrl is an http or https URL of at most 512 characters");
+  }
+  return problems;
+}
+
+const ENV = /^[A-Z][A-Z0-9_]{0,63}$/;
+const PATH = /^\/[A-Za-z0-9._~/-]*$/;
+
+/**
+ * The registry's rules for a runtime that a build can see by itself: names,
+ * the port, paths and variable names. The registry checks the rest.
+ */
+function runtimeProblems(runtime: RuntimeDeclaration): string[] {
+  const problems: string[] = [];
+  const say = (problem: string) => problems.push(`listing runtime: ${problem}`);
+  if (!/^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(runtime.name)) say("name is a DNS label of at most 20 characters");
+  if (!Number.isInteger(runtime.port) || runtime.port < 1024 || runtime.port > 65535) say("port is 1024 to 65535");
+  for (const path of [runtime.health.ready, runtime.health.live, ...(runtime.publicPaths ?? []), ...(runtime.metrics ? [runtime.metrics.path] : [])]) {
+    if (!PATH.test(path) || path.length > 200) say(`${path} is not an absolute path`);
+  }
+  const envs = [
+    ...Object.keys(runtime.facts ?? {}),
+    ...(runtime.settings ?? []).map((setting) => setting.env),
+    ...(runtime.signingKey ? [runtime.signingKey.env] : []),
+    ...(runtime.database?.roles ?? []).map((role) => role.env),
+    ...(runtime.secrets ?? []).map((secret) => secret.env),
+    ...(runtime.metrics ? [runtime.metrics.tokenEnv] : []),
+  ];
+  for (const env of envs) if (!ENV.test(env)) say(`${env} is not an environment variable name`);
+  const seen = new Set<string>();
+  for (const env of envs) {
+    if (seen.has(env)) say(`${env} is filled twice`);
+    seen.add(env);
+  }
+  if (runtime.facts && Object.values(runtime.facts).includes("page_origin") && !runtime.pages) {
+    say("page_origin is a plug-in's own origin, which only one that serves pages has");
+  }
+  if (runtime.database && !/^\/[A-Za-z0-9._/-]+\.sql$/.test(runtime.database.provisionSql)) {
+    say("database provisionSql is an absolute path to a .sql file in the image");
   }
   return problems;
 }
@@ -301,7 +342,7 @@ function listingSource(plugin: ListedPlugin, avatar: Buffer): Record<string, unk
   };
 }
 
-/** A listing's registration: the plug-in's kind, and a container's image and Compose service. */
+/** A listing's registration: the plug-in's kind, and a container's image, Compose service and runtime. */
 export function registrationOf(plugin: ListedPlugin): Record<string, unknown> {
   const listing = plugin.listing!;
   return {
@@ -309,5 +350,47 @@ export function registrationOf(plugin: ListedPlugin): Record<string, unknown> {
     scope_ceiling: [...(listing.scopeCeiling ?? plugin.scopes ?? [])],
     reference_sectors: [...(listing.referenceSectors ?? [])],
     ...(listing.compose ? { compose: { service: listing.compose.service, base_url: listing.compose.baseUrl } } : {}),
+    ...(listing.runtime ? { runtime: runtimeOf(listing.runtime) } : {}),
   };
+}
+
+/** A runtime as the registry spells it. Variable names stay as they are; only field names change. */
+function runtimeOf(runtime: RuntimeDeclaration): Record<string, unknown> {
+  const defined = (entries: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== undefined));
+  const { health, database, metrics, integrations } = runtime;
+  return defined({
+    name: runtime.name,
+    port: runtime.port,
+    health: defined({ ready: health.ready, live: health.live, startup_seconds: health.startupSeconds }),
+    stop_grace_seconds: runtime.stopGraceSeconds,
+    migrates_on_start: runtime.migratesOnStart,
+    pages: runtime.pages,
+    public_paths: runtime.publicPaths && [...runtime.publicPaths],
+    facts: runtime.facts && { ...runtime.facts },
+    settings: runtime.settings?.map((setting) => defined({ env: setting.env, required: setting.required })),
+    signing_key: runtime.signingKey && { env: runtime.signingKey.env },
+    database:
+      database &&
+      defined({
+        min_major: database.minMajor,
+        dsn_scheme: database.dsnScheme,
+        roles: database.roles.map((role) => ({ id: role.id, login: role.login, env: role.env })),
+        provision_sql: database.provisionSql,
+      }),
+    secrets: runtime.secrets?.map((secret) => ({ id: secret.id, kind: secret.kind, env: secret.env })),
+    metrics: metrics && { path: metrics.path, token_env: metrics.tokenEnv },
+    integrations:
+      integrations &&
+      defined({
+        billing:
+          integrations.billing &&
+          defined({
+            hmac_env: integrations.billing.hmacEnv,
+            hmac_previous_env: integrations.billing.hmacPreviousEnv,
+            public_key_env: integrations.billing.publicKeyEnv,
+          }),
+        bundled_channel: integrations.bundledChannel && { env: integrations.bundledChannel.env },
+      }),
+  });
 }
