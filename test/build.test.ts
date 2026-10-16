@@ -254,7 +254,6 @@ describe("the registry source", () => {
       },
       secrets: [{ id: "session-key", kind: "ed25519_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
       metrics: { path: "/metrics", tokenEnv: "METRICS_TOKEN" },
-      integrations: { billing: { hmacEnv: "BILLING_HMAC", publicKeyEnv: "BILLING_PUBLIC_KEY_PEM" } },
     },`;
     write({ "src/plugin.ts": plugin("", runtime) });
     expect(await run({ registry: "registry" })).toBe(0);
@@ -277,8 +276,74 @@ describe("the registry source", () => {
       },
       secrets: [{ id: "session-key", kind: "ed25519_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
       metrics: { path: "/metrics", token_env: "METRICS_TOKEN" },
-      integrations: { billing: { hmac_env: "BILLING_HMAC", public_key_env: "BILLING_PUBLIC_KEY_PEM" } },
     });
+  });
+
+  it("gives a plug-in with an entitlement hook billing's statement key, without being asked", async () => {
+    const runtime = `runtime: {
+      name: "tracker",
+      port: 8200,
+      health: { ready: "/readyz", live: "/healthz" },
+      facts: { INITIATIVE_API_URL: "app_api_internal" },
+    },`;
+    write({ "src/plugin.ts": plugin("hooks: { entitlement: async () => {} },", runtime) });
+    expect(await run({ registry: "registry" })).toBe(0);
+    const listing = JSON.parse(
+      readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8")
+    );
+    expect(listing.registration.runtime.facts).toEqual({
+      INITIATIVE_API_URL: "app_api_internal",
+      INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM: "entitlement_issuer_key",
+    });
+    expect(listing.registration.runtime).not.toHaveProperty("integrations");
+  });
+
+  it("leaves billing's statement key out of a runtime with no entitlement hook", async () => {
+    const runtime = `runtime: { name: "tracker", port: 8200, health: { ready: "/readyz", live: "/healthz" } },`;
+    write({ "src/plugin.ts": plugin("", runtime) });
+    expect(await run({ registry: "registry" })).toBe(0);
+    const listing = JSON.parse(
+      readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8")
+    );
+    expect(listing.registration.runtime).not.toHaveProperty("facts");
+  });
+
+  for (const [what, facts] of [
+    ["under another name", `{ BILLING_KEY: "entitlement_issuer_key" }`],
+    ["replaced by another fact", `{ INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM: "app_url" }`],
+  ] as const) {
+    it(`refuses billing's statement key ${what}`, async () => {
+      const runtime = `runtime: { name: "tracker", port: 8200, health: { ready: "/readyz", live: "/healthz" }, facts: ${facts} },`;
+      write({ "src/plugin.ts": plugin("hooks: { entitlement: async () => {} },", runtime) });
+      expect(await run()).toBe(1);
+      expect(errors.join("")).toContain(
+        "listing runtime: entitlement_issuer_key goes in INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM"
+      );
+    });
+  }
+
+  it("refuses a variable that would collide with billing's statement key", async () => {
+    const runtime = `runtime: {
+      name: "tracker",
+      port: 8200,
+      health: { ready: "/readyz", live: "/healthz" },
+      settings: [{ env: "INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM" }],
+    },`;
+    write({ "src/plugin.ts": plugin("hooks: { entitlement: async () => {} },", runtime) });
+    expect(await run()).toBe(1);
+    expect(errors.join("")).toContain("listing runtime: INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM is filled twice");
+  });
+
+  it("refuses the removed runtime integrations", async () => {
+    const runtime = `runtime: {
+      name: "tracker",
+      port: 8200,
+      health: { ready: "/readyz", live: "/healthz" },
+      integrations: { billing: { hmacEnv: "BILLING_HMAC", publicKeyEnv: "BILLING_PUBLIC_KEY_PEM" } },
+    },`;
+    write({ "src/plugin.ts": plugin("", runtime) });
+    expect(await run()).toBe(1);
+    expect(errors.join("")).toContain("listing.runtime.integrations was removed in 7.2");
   });
 
   it("refuses a runtime the registry would refuse", async () => {

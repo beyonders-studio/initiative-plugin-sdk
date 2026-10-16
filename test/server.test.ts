@@ -13,9 +13,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { manifestOf } from "../src/define.js";
 import { generatePluginKeys, jwkThumbprint, loadPrivateKey, signJwt } from "../src/keys.js";
-import { createPlugin, serve, type PluginHandler } from "../src/server.js";
+import { createPlugin, entitlementMetrics, entitlementMetricsText, serve, type PluginHandler } from "../src/server.js";
 import { CONTEXT_TOKEN_TYPE, HANDOFF_TOKEN_TYPE } from "../src/tokens.js";
 import { issuesPlugin, trackerPlugin } from "./support/plugin.js";
+import { BILLING_PUBLIC_PEM, OTHER_PRIVATE_KEY, RSA_PUBLIC_PEM, statement } from "./support/statement.js";
 
 const BASE = "https://initiative.example.com/api/v1";
 const platform = generatePluginKeys({ kid: "platform-1" });
@@ -56,18 +57,20 @@ const outbound = (async (input: string | URL | Request) => {
 let handler: PluginHandler;
 let seen: ReturnType<typeof trackerPlugin>["seen"];
 let logs: string[];
+let warnings: string[];
 
 function start(options: Record<string, unknown> = {}): PluginHandler {
   const tracker = trackerPlugin();
   seen = tracker.seen;
   logs = [];
+  warnings = [];
   return createPlugin(tracker.plugin, {
     baseUrl: BASE,
     key: { privateKey: pluginKeys.privateKeyPem, kid: "plugin-1" },
     manifest: manifestOf(tracker.plugin, MODULES),
     fetch: outbound,
-    log: { info: () => {}, warn: () => {}, error: (message) => logs.push(message) },
-    env: {},
+    log: { info: () => {}, warn: (message) => warnings.push(message), error: (message) => logs.push(message) },
+    env: { INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM: BILLING_PUBLIC_PEM },
     ...options,
   });
 }
@@ -308,24 +311,80 @@ describe("community hooks", () => {
     expect(unknown).toEqual({ status: 400, body: { error: "invalid-request", detail: "not a community_status call" } });
   });
 
-  it("hands on an entitlement statement whole, with its version", async () => {
-    const statement = { version: 4, values: { monthly_allowance: 30000, packs_purchased: 0 } };
-    expect((await post("/v1/hooks/entitlement", statement, hookToken("entitlement"))).status).toBe(204);
-    expect(seen[0].call).toMatchObject(statement);
+  it("hands on a verified statement's version and values, from its claims alone", async () => {
+    const before = entitlementMetrics().statements.applied ?? 0;
+    const body = { statement: statement(), version: 99, values: { monthly_allowance: null } };
+    expect((await post("/v1/hooks/entitlement", body, hookToken("entitlement"))).status).toBe(204);
+    expect(seen[0].call).toMatchObject({ version: 4, values: { monthly_allowance: 30000, packs_purchased: 0 } });
+    expect(seen[0].call).not.toHaveProperty("statement");
+    expect(entitlementMetrics().statements.applied).toBe(before + 1);
+    expect(warnings).toEqual([]);
   });
 
-  for (const [what, body] of [
-    ["no version", { values: {} }],
-    ["a version that is not a whole number", { version: 1.5, values: {} }],
-    ["a version below one", { version: 0, values: {} }],
-    ["values that are not an object", { version: 1, values: [1] }],
-  ] as const) {
-    it(`refuses an entitlement with ${what}`, async () => {
-      const answer = await post("/v1/hooks/entitlement", body, hookToken("entitlement"));
-      expect(answer).toEqual({ status: 400, body: { error: "invalid-request", detail: "not an entitlement call" } });
+  const refusals: Array<[string, () => unknown, string, Record<string, string>?]> = [
+    ["a wrong alg", () => statement({}, { alg: "ES256" }), "alg"],
+    ["alg none", () => statement({}, { alg: "none" }, null), "alg"],
+    ["a wrong typ", () => statement({}, { typ: "JWT" }), "typ"],
+    ["no typ", () => statement({}, { typ: undefined }), "typ"],
+    ["another Ed25519 key's signature", () => statement({}, {}, OTHER_PRIVATE_KEY), "signature"],
+    ["claims changed after signing", () => {
+      const [header, , signature] = statement().split(".");
+      const forged = Buffer.from(JSON.stringify({ iss: "initiative-billing", listing_uid: "K7M2QX8N4TVB9C", version: 9, values: {} })).toString("base64url");
+      return `${header}.${forged}.${signature}`;
+    }, "signature"],
+    ["an RSA issuer key", () => statement(), "bad-key", { INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM: RSA_PUBLIC_PEM }],
+    ["no issuer key", () => statement(), "no-key", {}],
+    ["a wrong iss", () => statement({ iss: "initiative" }), "iss"],
+    ["another listing's uid", () => statement({ listing_uid: "M3N4P5Q6R7S8T9" }), "listing"],
+    ["a version that is a string", () => statement({ version: "4" }), "claims"],
+    ["a version below one", () => statement({ version: 0 }), "claims"],
+    ["a version that is not whole", () => statement({ version: 1.5 }), "claims"],
+    ["values that are not an object", () => statement({ values: [1] }), "claims"],
+    ["no values", () => statement({ values: undefined }), "claims"],
+    ["no statement at all", () => undefined, "malformed"],
+    ["a statement that is not a JWS", () => "version.4", "malformed"],
+  ];
+  for (const [what, make, reason, env] of refusals) {
+    it(`refuses a statement with ${what}, 422, and counts it`, async () => {
+      if (env) handler = start({ env });
+      const before = entitlementMetrics().statements[`refused-${reason}`] ?? 0;
+      const answer = await post("/v1/hooks/entitlement", { statement: make() }, hookToken("entitlement"));
+      expect(answer).toEqual({ status: 422, body: { error: "statement-refused", detail: reason } });
       expect(seen).toHaveLength(0);
+      expect(entitlementMetrics().statements[`refused-${reason}`]).toBe(before + 1);
     });
   }
+
+  it("refuses every statement without an issuer key, and says why once", async () => {
+    handler = start({ env: {} });
+    for (let i = 0; i < 2; i += 1) {
+      expect((await post("/v1/hooks/entitlement", { statement: statement() }, hookToken("entitlement"))).status).toBe(422);
+    }
+    expect(warnings).toEqual([
+      "entitlement statements are all refused: no entitlement issuer key is configured (INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM)",
+    ]);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("counts a grant of an unlimited allowance once per community, until it is taken away", async () => {
+    const unlimited = (version: number, community = "gapp_1") =>
+      post(
+        "/v1/hooks/entitlement",
+        { statement: statement({ version, values: { monthly_allowance: null } }) },
+        hookToken("entitlement", { community_ref: community })
+      );
+    const before = entitlementMetrics().unlimitedGrants;
+    await unlimited(1, "gapp_unlimited");
+    await unlimited(2, "gapp_unlimited");
+    expect(entitlementMetrics().unlimitedGrants).toBe(before + 1);
+    await post("/v1/hooks/entitlement", { statement: statement({ version: 3 }) }, hookToken("entitlement", { community_ref: "gapp_unlimited" }));
+    await unlimited(4, "gapp_unlimited");
+    await unlimited(1, "gapp_other");
+    expect(entitlementMetrics().unlimitedGrants).toBe(before + 3);
+    const text = entitlementMetricsText();
+    expect(text).toContain('initiative_plugin_entitlement_statements_total{outcome="applied"} ');
+    expect(text).toContain(`initiative_plugin_entitlement_unlimited_grants_total ${before + 3}\n`);
+  });
 
   it("answers 404 for a community hook the plug-in does not define, so Initiative stops sending it", async () => {
     const tracker = trackerPlugin();
@@ -338,7 +397,7 @@ describe("community hooks", () => {
       fetch: outbound,
       env: {},
     });
-    const answer = await post("/v1/hooks/entitlement", { version: 1, values: {} }, hookToken("entitlement"));
+    const answer = await post("/v1/hooks/entitlement", { statement: statement() }, hookToken("entitlement"));
     expect(answer.status).toBe(404);
     expect(tracker.seen).toHaveLength(0);
   });

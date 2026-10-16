@@ -244,9 +244,11 @@ export interface CommunityStatusCall extends Call {
 }
 
 /**
- * What `entitlement` is sent: the deployment's entitlement issuer's statement
- * of what this community holds of the plug-in. Absent an issuer, it is never
- * sent.
+ * What `entitlement` is sent: billing's statement of what this community holds
+ * of the plug-in. Billing signs it, Initiative hands it on verbatim, and the
+ * SDK verifies it against billing's key (the runtime fact
+ * `entitlement_issuer_key`) before the hook runs; a statement that does not
+ * verify never reaches it. On a deployment without billing, it is never sent.
  */
 export interface EntitlementCall extends Call {
   /**
@@ -257,7 +259,7 @@ export interface EntitlementCall extends Call {
   version: number;
   /**
    * The statement itself, replacing the last one whole. Its keys are agreed
-   * between your plug-in and the issuer; Initiative carries them unread.
+   * between your plug-in and billing; Initiative carries them unread.
    */
   values: Record<string, unknown>;
 }
@@ -436,7 +438,14 @@ export type RuntimeFact =
   /** This plug-in's own origin, where it serves framed pages (needs `pages`). */
   | "page_origin"
   /** The port below. */
-  | "port";
+  | "port"
+  /**
+   * Billing's public key for entitlement statements (SPKI PEM), absent when the
+   * deployment runs no billing. Added by the build, under
+   * `INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM`, to every plug-in with an
+   * `entitlement` hook.
+   */
+  | "entitlement_issuer_key";
 
 export interface RuntimeDeclaration {
   /** Its short name in a deployment: a DNS label of at most 20 characters, unique in a package. */
@@ -472,11 +481,6 @@ export interface RuntimeDeclaration {
   /** Values the deployment generates once and keeps. */
   secrets?: Array<{ id: string; kind: "random_alnum_32" | "random_bytes_32" | "hex_32" | "ed25519_private_key_pem"; env: string }>;
   metrics?: { path: string; tokenEnv: string };
-  /** Shared secrets with Initiative's own services, honoured for a deployment's own publishers only. */
-  integrations?: {
-    billing?: { hmacEnv: string; hmacPreviousEnv?: string; publicKeyEnv: string };
-    bundledChannel?: { env: string };
-  };
 }
 
 export interface PluginDefinition<E, W> {
