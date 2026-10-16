@@ -1,7 +1,7 @@
 /**
  * The server: every route Initiative calls, answered from the definition, with
- * Initiative's tokens signed here by a test key standing in for the
- * deployment's.
+ * Initiative's tokens signed here by an Ed25519 test key standing in for the
+ * deployment's platform key.
  */
 
 import { randomUUID } from "node:crypto";
@@ -18,9 +18,9 @@ import { CONTEXT_TOKEN_TYPE, HANDOFF_TOKEN_TYPE } from "../src/tokens.js";
 import { issuesPlugin, trackerPlugin } from "./support/plugin.js";
 
 const BASE = "https://initiative.example.com/api/v1";
-const platform = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
-const stranger = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
-const pluginKeys = generatePluginKeys({ alg: "ES256", kid: "plugin-1" });
+const platform = generatePluginKeys({ kid: "platform-1" });
+const stranger = generatePluginKeys({ kid: "platform-1" });
+const pluginKeys = generatePluginKeys({ kid: "plugin-1" });
 const MODULES = { "open-count": "globalThis.render = function () {};" };
 
 function sign(
@@ -108,7 +108,7 @@ describe("what the plug-in publishes", () => {
   it("serves its public key, and nothing private", async () => {
     const jwks = await read(get("/.well-known/jwks.json"));
     expect(jwks.keys).toHaveLength(1);
-    expect(jwks.keys[0]).toMatchObject({ kid: "plugin-1", kty: "EC", alg: "ES256" });
+    expect(jwks.keys[0]).toMatchObject({ kid: "plugin-1", kty: "OKP", crv: "Ed25519", alg: "EdDSA" });
     expect(jwks.keys[0]).not.toHaveProperty("d");
   });
 

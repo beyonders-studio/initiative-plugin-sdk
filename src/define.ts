@@ -470,7 +470,7 @@ export interface RuntimeDeclaration {
     provisionSql: string;
   };
   /** Values the deployment generates once and keeps. */
-  secrets?: Array<{ id: string; kind: "random_alnum_32" | "random_bytes_32" | "hex_32" | "rsa_private_key_pem"; env: string }>;
+  secrets?: Array<{ id: string; kind: "random_alnum_32" | "random_bytes_32" | "hex_32" | "ed25519_private_key_pem"; env: string }>;
   metrics?: { path: string; tokenEnv: string };
   /** Shared secrets with Initiative's own services, honoured for a deployment's own publishers only. */
   integrations?: {

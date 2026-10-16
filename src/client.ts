@@ -42,7 +42,6 @@ export {
   jwkThumbprint,
   loadPrivateKey,
   publicJwks,
-  type PluginKeyAlgorithm,
   type PluginSigningKey,
   type GeneratedPluginKeys,
   type Jwks,

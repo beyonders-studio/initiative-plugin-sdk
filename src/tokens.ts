@@ -1,8 +1,8 @@
 /**
  * Verifying the tokens Initiative signs when it reaches the plug-in.
  *
- * Both kinds are RS256 JWTs signed with the deployment's key and published in
- * its JWKS at `/api/v1/plugin-platform/jwks.json`:
+ * Both kinds are EdDSA JWTs (RFC 8037) signed with the deployment's Ed25519
+ * key and published in its JWKS at `/api/v1/plugin-platform/jwks.json`:
  *
  * - **Context token**, on every call to the plug-in (`Authorization: Bearer …`).
  *   Scope `endpoint` is a call to one endpoint, named by `endpoint_id`; scope
@@ -15,12 +15,13 @@
  *   the member (`sub`), the page, and the initiative it was opened in. It is
  *   for one use.
  *
- * Each is checked the same way: the `kid` against the deployment's JWKS, the
- * signature, `iss` = `initiative`, `aud` = `initiative-plugin:<public id>`, and
- * `exp`/`iat` against the clock with a small leeway.
+ * Each is checked the same way: `alg` = `EdDSA`, the `kid` against the
+ * deployment's JWKS (only its OKP/Ed25519 keys are read), the signature,
+ * `iss` = `initiative`, `aud` = `initiative-plugin:<public id>`, and `exp`/`iat`
+ * against the clock with a small leeway. Any other algorithm is refused.
  */
 
-import { createPublicKey, createVerify, type KeyObject } from "node:crypto";
+import { createPublicKey, verify, type KeyObject } from "node:crypto";
 
 import { ACTOR_KINDS, ITEM_KINDS, type ActorKind, type ItemKind } from "./contract.js";
 import type { ItemRef } from "./define.js";
@@ -142,9 +143,9 @@ export function audienceFor(publicId: string): string {
 
 interface Jwk {
   kty: string;
+  crv?: string;
   kid?: string;
-  n?: string;
-  e?: string;
+  x?: string;
 }
 
 interface CacheEntry {
@@ -206,7 +207,7 @@ export class JwksCache {
     const parsed = (await response.json()) as { keys?: Jwk[] };
     const keys = new Map<string, KeyObject>();
     for (const jwk of parsed.keys ?? []) {
-      if (jwk.kty !== "RSA" || !jwk.kid || !jwk.n || !jwk.e) continue;
+      if (jwk.kty !== "OKP" || jwk.crv !== "Ed25519" || !jwk.kid || !jwk.x) continue;
       keys.set(jwk.kid, createPublicKey({ key: jwk as never, format: "jwk" }));
     }
     return keys;
@@ -360,7 +361,7 @@ async function verifyInitiativeToken(
   if (header.typ !== typ) {
     throw new ContextTokenError(`token is typed ${String(header.typ)}, not ${typ}`);
   }
-  if (header.alg !== "RS256") {
+  if (header.alg !== "EdDSA") {
     throw new ContextTokenError(`unexpected algorithm ${header.alg}`);
   }
   if (!header.kid) {
@@ -368,10 +369,8 @@ async function verifyInitiativeToken(
   }
 
   const key = await options.jwks.keyFor(options.baseUrl, header.kid);
-  const verifier = createVerify("RSA-SHA256");
-  verifier.update(`${rawHeader}.${rawPayload}`);
-  verifier.end();
-  if (!verifier.verify(key, Buffer.from(rawSignature, "base64url"))) {
+  const input = Buffer.from(`${rawHeader}.${rawPayload}`);
+  if (!verify(null, input, key, Buffer.from(rawSignature, "base64url"))) {
     throw new ContextTokenError("signature did not verify");
   }
 

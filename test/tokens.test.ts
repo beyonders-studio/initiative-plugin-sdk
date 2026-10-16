@@ -1,8 +1,12 @@
 /**
  * Verifying the tokens Initiative signs: the per-call context token and the
- * page handoff token. Each is signed here with a test key standing in for the
- * deployment's, and published through an injected JWKS fetch.
+ * page handoff token. Each is signed here with an Ed25519 test key standing in
+ * for the deployment's platform key (made with the same keygen a plug-in uses:
+ * every key in the stack has one shape), and published through an injected
+ * JWKS fetch.
  */
+
+import { generateKeyPairSync, sign } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
@@ -23,7 +27,7 @@ const BASE = "https://initiative.example.com";
 const PUBLIC_ID = "acme.tracker";
 const NOW = 1_780_000_000;
 
-const platform = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
+const platform = generatePluginKeys({ kid: "platform-1" });
 const signing = loadPrivateKey(platform.privateKeyPem, "platform-1");
 
 function jwksFetch(documents: Array<{ keys: unknown[] }> = [platform.jwks]) {
@@ -76,6 +80,19 @@ async function refusal(promise: Promise<unknown>): Promise<string> {
   );
   expect(failure).toBeInstanceOf(ContextTokenError);
   return (failure as Error).message;
+}
+
+/** An RSA key and its JWK: the old shape, which a verifier must not accept. */
+function rsaKey(kid: string) {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const { n, e } = publicKey.export({ format: "jwk" }) as Record<string, string>;
+  return { privateKey, jwk: { kty: "RSA", kid, alg: "RS256", use: "sig", n, e } };
+}
+
+function signRs256(key: ReturnType<typeof rsaKey>["privateKey"], kid: string, claims: Record<string, unknown>, typ: string): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const input = `${encode({ alg: "RS256", kid, typ })}.${encode(claims)}`;
+  return `${input}.${sign("sha256", Buffer.from(input), key).toString("base64url")}`;
 }
 
 describe("verifyContextToken", () => {
@@ -173,18 +190,32 @@ describe("verifyContextToken", () => {
 
   it("refuses a signature by a key the deployment did not publish", async () => {
     const { fetchImpl } = jwksFetch();
-    const stranger = generatePluginKeys({ alg: "RS256" });
+    const stranger = generatePluginKeys({ kid: "platform-1" });
     const token = signJwt(loadPrivateKey(stranger.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain(
       "did not verify"
     );
   });
 
-  it("refuses any algorithm but RS256", async () => {
+  it("refuses an RS256 token, even under a published RSA key", async () => {
+    const rsa = rsaKey("platform-1");
+    const { fetchImpl } = jwksFetch([{ keys: [...platform.jwks.keys, rsa.jwk] }]);
+    const token = signRs256(rsa.privateKey, "platform-1", contextClaims(), CONTEXT_TOKEN_TYPE);
+    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toBe("unexpected algorithm RS256");
+  });
+
+  it("refuses an unsigned token", async () => {
     const { fetchImpl } = jwksFetch();
-    const ec = generatePluginKeys({ alg: "ES256", kid: "platform-1" });
-    const token = signJwt(loadPrivateKey(ec.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
-    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("ES256");
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const token = `${encode({ alg: "none", kid: "platform-1", typ: CONTEXT_TOKEN_TYPE })}.${encode(contextClaims())}.`;
+    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toBe("unexpected algorithm none");
+  });
+
+  it("reads no RSA key from the set", async () => {
+    const rsa = rsaKey("platform-1");
+    const { fetchImpl } = jwksFetch([{ keys: [rsa.jwk] }]);
+    const token = signJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE);
+    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("published no keys");
   });
 
   it("refuses a handoff token presented as a context token", async () => {
@@ -226,7 +257,7 @@ describe("verifyContextToken", () => {
   });
 
   it("refetches once for an unknown kid, so a rotation resolves", async () => {
-    const next = generatePluginKeys({ alg: "RS256", kid: "platform-2" });
+    const next = generatePluginKeys({ kid: "platform-2" });
     const both = { keys: [...platform.jwks.keys, ...next.jwks.keys] };
     const { urls, fetchImpl } = jwksFetch([platform.jwks, both]);
     const opts = options(fetchImpl);

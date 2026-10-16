@@ -18,7 +18,7 @@ import {
 
 const BASE = "https://initiative.example.com/api/v1";
 const TOKEN_URL = `${BASE}/plugin-platform/oauth/token`;
-const keys = generatePluginKeys({ alg: "ES256", kid: "plugin-1" });
+const keys = generatePluginKeys({ kid: "plugin-1" });
 const NOW = 1_780_000_000_000;
 
 interface Sent {
@@ -96,7 +96,8 @@ describe("tokens", () => {
     expect(decode(assertion)).toMatchObject({ iss: "acme.tracker", sub: "acme.tracker", aud: TOKEN_URL });
     const [header, payload, signature] = assertion.split(".");
     const key = createPublicKey({ key: keys.jwks.keys[0] as never, format: "jwk" });
-    expect(verify("sha256", Buffer.from(`${header}.${payload}`), { key, dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64url"))).toBe(true);
+    expect(JSON.parse(Buffer.from(header, "base64url").toString())).toMatchObject({ alg: "EdDSA", kid: "plugin-1" });
+    expect(verify(null, Buffer.from(`${header}.${payload}`), key, Buffer.from(signature, "base64url"))).toBe(true);
   });
 
   it("reuses a token until shortly before it expires, and shares one request between concurrent callers", async () => {

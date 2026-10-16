@@ -420,8 +420,10 @@ speaks `Request` and `Response`. `serve` runs it on `node:http`, on `PORT`
 | `POST /v1/hooks/{name}` | Initiative's hook calls, on a lifecycle token for that hook. |
 | a page's path | The page's handler. |
 
-Every call's token is verified against the deployment's JWKS, which is cached
-and refetched once for a key it does not know. Each kind carries its own `typ`
+Every call's token is an EdDSA JWT, verified against the deployment's JWKS,
+which is cached and refetched once for a key it does not know. Only the set's
+Ed25519 keys are read, and a token signed any other way (RS256, ES256, `none`) is
+refused. Each kind carries its own `typ`
 (`initiative-context+jwt` on endpoint and hook calls, `initiative-handoff+jwt` on
 a page handoff), and each path takes only its own kind. Bodies are capped at 5 MiB. A
 refusal answers `{ "error": code, "detail": sentence }`.
@@ -435,7 +437,7 @@ refusal answers `{ "error": code, "detail": sentence }`.
 | `context` | | Handed to every handler as `context`. |
 | `fetch`, `now`, `log`, `env` | | For tests and other runtimes. |
 
-**The plug-in's key.** With no key given, the plug-in generates an ES256 key the first
+**The plug-in's key.** With no key given, the plug-in generates an Ed25519 key the first
 time it starts, keeps it, and serves its public half at
 `/.well-known/jwks.json`. The deployment running it registers that JWKS with
 Initiative, beside where the plug-in runs, in its `PLUGIN_SERVICES_CONFIG` entry or
@@ -452,12 +454,17 @@ two can be compared. `jwkThumbprint` from `initiative-plugin-sdk/client` compute
 it for a JWKS entry. To bring your own key:
 
 ```sh
-npx initiative-plugin keygen --alg ES256 --out ./secrets
+npx initiative-plugin keygen --out ./secrets
 ```
 
 `private-key.pem` (mode 0600) stays with the plug-in; `jwks.json` is its public
 half. To rotate, publish a JWKS holding both keys, switch the plug-in to the new
 one, then drop the old entry.
+
+Every plug-in key is Ed25519, signing EdDSA, as is the deployment's own key. Its signatures are deterministic,
+so there is no per-signature nonce whose reuse or bias would give the key away.
+`loadPrivateKey` refuses any other kind of key. A deployment that runs the
+plug-in from its package mints the key for it.
 
 **Context.** Your own services reach handlers as `context`. Say what it holds
 once:
