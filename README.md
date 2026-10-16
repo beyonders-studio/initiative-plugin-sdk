@@ -92,7 +92,8 @@ export default definePlugin({
 | | |
 |---|---|
 | `params` | What the caller sent, by the declared names. Initiative sends strings; an automation may send numbers and booleans as they are. |
-| `installation` | The community, by the reference this plug-in's install knows it by. What your own rows key on. |
+| `installation` | The community, by the reference this plug-in knows it by. It stays the same across uninstall and reinstall, until the community erases the plug-in's data, so it is what your own rows key on. Member references hold the same way. |
+| `community_status` | Where the community stands: `active`, `read_only`, `suspended`, `on_hold` or `deleted`. Anything but `active` means hold back work done on its behalf. |
 | `actor` | `{ kind: "installation" }`, or `{ kind: "member", member }` when another plug-in called as one of the community's members. |
 | `caller` | The plug-in that made the call through Initiative, or null for Initiative's own. |
 | `initiative` | The initiative the call is confined to, or null. |
@@ -141,6 +142,40 @@ hooks: {
 
 A hook that throws is answered 500: a connection is then not recorded, and a
 delivery or a schedule is tried again.
+
+### The community's own hooks
+
+Five hooks are about the community's install rather than a connection. Each
+is optional; a plug-in that defines none is answered 404, and Initiative stops
+sending that hook.
+
+```ts
+hooks: {
+  installed: async ({ installation }) => { /* a first install, or a return */ },
+  uninstalled: async ({ installation }) => { /* keep what you hold: it may come back */ },
+  erase: async ({ installation }) => { /* delete everything about this community */ },
+  community_status: async ({ installation, status }) => { /* pause unless active */ },
+  entitlement: async ({ installation, version, values }) => { /* keep the newest */ },
+},
+```
+
+- `installed` runs when the community installs the plug-in, and again if it
+  returns after an uninstall. It comes back under the same `installation`
+  and the same member references, so whatever you kept for it still fits.
+- `uninstalled` runs when it removes the plug-in. Its references stand.
+- `erase` runs when the community asks for the plug-in's data to be deleted,
+  or is itself purged. Delete everything you hold for it. Once the hook
+  answers, Initiative forgets the references, and a later install starts
+  afresh under new ones. A hook that throws is asked again.
+- `community_status` runs whenever the community's standing changes. The same
+  value rides every call as `community_status`, so a missed hook is caught up
+  on the next call.
+- `entitlement` carries the deployment's statement of what this community
+  holds of the plug-in: `values`, whose keys are agreed between the plug-in
+  and the deployment's issuer, and a `version` that rises with each
+  statement. Statements can repeat or arrive out of order, so keep the
+  highest version you have seen and ignore a lower one. A deployment with no
+  issuer never sends one.
 
 ### The vendor's own setup
 

@@ -127,12 +127,25 @@ export async function compile(esbuild: Esbuild, root: string, entry: string): Pr
   return checked(plugin, manifestOf(plugin, modules), problems);
 }
 
+/**
+ * Listing terms this contract no longer has, named rather than dropped: a
+ * built plug-in is JSON, and a key it still carries would otherwise vanish
+ * without a word.
+ */
+function retiredProblems(plugin: ListedPlugin): string[] {
+  const listing = (plugin.listing ?? {}) as Record<string, unknown>;
+  return "referenceSectors" in listing
+    ? ["listing.referenceSectors was removed in 7.0: whether a plug-in is billable is a package's to state, not its listing's"]
+    : [];
+}
+
 /** The plug-in and its manifest, or every problem with them beside `problems`. */
 function checked(plugin: ListedPlugin, manifest: Manifest, problems: string[]): Compiled {
   problems.push(
     ...validateManifest(manifest, { publicId: plugin.publicId }).map((problem) => `manifest${problem.where}: ${problem.message}`)
   );
   problems.push(...kindProblems(plugin));
+  problems.push(...retiredProblems(plugin));
   if (plugin.listing?.compose) problems.push(...composeProblems(plugin.listing.compose));
   if (plugin.listing?.runtime) problems.push(...runtimeProblems(plugin.listing.runtime));
   if (plugin.listing?.images) problems.push(...imageProblems(plugin.listing));
@@ -386,7 +399,6 @@ export function registrationOf(plugin: ListedPlugin): Record<string, unknown> {
   return {
     ...(plugin.hosts ? { kind: "declarative" } : { kind: "container", image: listing.image }),
     scope_ceiling: [...(listing.scopeCeiling ?? plugin.scopes ?? [])],
-    reference_sectors: [...(listing.referenceSectors ?? [])],
     ...(listing.compose ? { compose: { service: listing.compose.service, base_url: listing.compose.baseUrl } } : {}),
     ...(listing.runtime ? { runtime: runtimeOf(listing.runtime) } : {}),
   };

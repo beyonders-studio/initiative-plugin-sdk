@@ -205,7 +205,6 @@ describe("the registry source", () => {
         kind: "container",
         image: `ghcr.io/acme/tracker@sha256:${"a".repeat(64)}`,
         scope_ceiling: [],
-        reference_sectors: [],
       },
     });
     expect(JSON.parse(readFileSync(join(source, "1.2.0", "manifest.json"), "utf-8"))).toEqual(manifest());
@@ -382,7 +381,7 @@ describe("a declarative plug-in", () => {
     expect(await run({ registry: "registry" })).toBe(0);
     expect(manifest()).not.toHaveProperty("service");
     const listing = JSON.parse(readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8"));
-    expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: [], reference_sectors: [] });
+    expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: [] });
   });
 
   it("refuses an image, and a container plug-in's listing without one", async () => {
@@ -417,13 +416,18 @@ describe("a plug-in built outside TypeScript", () => {
           avatar: "assets/avatar.png",
           version: "2.0.0",
           image: `ghcr.io/acme/tracker@sha256:${"b".repeat(64)}`,
-          referenceSectors: ["billing"],
           ...listing,
         },
       }),
     });
     return written;
   }
+
+  it("refuses a listing that still names reference sectors", async () => {
+    await built({ referenceSectors: ["billing"] });
+    expect(await build({ root, plugin: "src/plugin.ts", manifest: "plugin.json", registry: "registry", check: false })).toBe(1);
+    expect(errors.join("\n")).toContain("listing.referenceSectors was removed in 7.0");
+  });
 
   it("writes its registry source from its manifest and the version its listing states", async () => {
     const written = await built();
@@ -435,7 +439,6 @@ describe("a plug-in built outside TypeScript", () => {
       kind: "container",
       image: `ghcr.io/acme/tracker@sha256:${"b".repeat(64)}`,
       scope_ceiling: [],
-      reference_sectors: ["billing"],
     });
     expect(JSON.parse(readFileSync(join(source, "2.0.0", "manifest.json"), "utf-8"))).toEqual(written);
     expect(existsSync(join(root, "manifest.json"))).toBe(false);
