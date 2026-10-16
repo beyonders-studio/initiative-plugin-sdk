@@ -333,6 +333,34 @@ describe("the installation itself", () => {
     expect(tokenForms()).toHaveLength(1);
   });
 
+  it("reads the community's entitlement, and null when the issuer has made none", async () => {
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () =>
+      json(200, { version: 4, values: { monthly_allowance: 30000 } })
+    );
+    const client = initiative().asInstallation("gapp_1");
+    expect(await client.entitlement()).toEqual({ version: 4, values: { monthly_allowance: 30000 } });
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(404, { detail: "NO_ENTITLEMENT" }));
+    expect(await client.entitlement()).toBeNull();
+  });
+
+  it("reports a meter's total for a period, and refuses a malformed report before sending it", async () => {
+    answers.set("PUT /api/v1/plugin-platform/installation/usage/runs/2026-10", () => json(200, { quantity: 1200 }));
+    const client = initiative().asInstallation("gapp_1");
+    await client.reportUsage({ meter: "runs", period: "2026-10", quantity: 1200, asOf: new Date("2026-10-16T12:00:00Z") });
+    expect(JSON.parse(sent.at(-1)!.body)).toEqual({ quantity: 1200, as_of: "2026-10-16T12:00:00.000Z" });
+    const before = sent.length;
+    for (const report of [
+      { meter: "runs", period: "2026-13", quantity: 1 },
+      { meter: "runs", period: "Oct", quantity: 1 },
+      { meter: "runs", period: "2026-10", quantity: -1 },
+      { meter: "runs", period: "2026-10", quantity: 1.5 },
+      { meter: "", period: "2026-10", quantity: 1 },
+    ]) {
+      await expect(client.reportUsage(report)).rejects.toThrow(TypeError);
+    }
+    expect(sent.length).toBe(before);
+  });
+
   it("reads, writes and finds the plug-in's metadata on items and on its install, on the installation's token", async () => {
     answers.set("GET /api/v1/plugin-platform/installation/metadata", (request) =>
       new URL(request.url).searchParams.get("entity_type") === "plugin"
