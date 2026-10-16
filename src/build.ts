@@ -31,6 +31,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { CAPS } from "./contract.js";
+import { ENTITLEMENT_ISSUER_KEY_ENV, ENTITLEMENT_ISSUER_KEY_FACT } from "./statements.js";
 import { manifestOf, type AnyPlugin, type ListingDeclaration, type RuntimeDeclaration } from "./define.js";
 import type { Manifest } from "./contract.js";
 import { validateManifest } from "./validate.js";
@@ -147,7 +148,7 @@ function checked(plugin: ListedPlugin, manifest: Manifest, problems: string[]): 
   problems.push(...kindProblems(plugin));
   problems.push(...retiredProblems(plugin));
   if (plugin.listing?.compose) problems.push(...composeProblems(plugin.listing.compose));
-  if (plugin.listing?.runtime) problems.push(...runtimeProblems(plugin.listing.runtime));
+  if (plugin.listing?.runtime) problems.push(...runtimeProblems(plugin.listing.runtime, plugin.hooks?.entitlement !== undefined));
   if (plugin.listing?.images) problems.push(...imageProblems(plugin.listing));
   return problems.length ? { problems } : { plugin, manifest };
 }
@@ -325,7 +326,7 @@ const PATH = /^\/[A-Za-z0-9._~/-]*$/;
  * The registry's rules for a runtime that a build can see by itself: names,
  * the port, paths and variable names. The registry checks the rest.
  */
-function runtimeProblems(runtime: RuntimeDeclaration): string[] {
+function runtimeProblems(runtime: RuntimeDeclaration, entitled: boolean): string[] {
   const problems: string[] = [];
   const say = (problem: string) => problems.push(`listing runtime: ${problem}`);
   if (!/^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(runtime.name)) say("name is a DNS label of at most 20 characters");
@@ -333,8 +334,10 @@ function runtimeProblems(runtime: RuntimeDeclaration): string[] {
   for (const path of [runtime.health.ready, runtime.health.live, ...(runtime.publicPaths ?? []), ...(runtime.metrics ? [runtime.metrics.path] : [])]) {
     if (!PATH.test(path) || path.length > 200) say(`${path} is not an absolute path`);
   }
+  const added = entitled && runtime.facts?.[ENTITLEMENT_ISSUER_KEY_ENV] === undefined ? [ENTITLEMENT_ISSUER_KEY_ENV] : [];
   const envs = [
     ...Object.keys(runtime.facts ?? {}),
+    ...added,
     ...(runtime.settings ?? []).map((setting) => setting.env),
     ...(runtime.signingKey ? [runtime.signingKey.env] : []),
     ...(runtime.database?.roles ?? []).map((role) => role.env),
@@ -346,6 +349,11 @@ function runtimeProblems(runtime: RuntimeDeclaration): string[] {
   for (const env of envs) {
     if (seen.has(env)) say(`${env} is filled twice`);
     seen.add(env);
+  }
+  for (const [env, fact] of Object.entries(runtime.facts ?? {})) {
+    if ((fact === ENTITLEMENT_ISSUER_KEY_FACT) !== (env === ENTITLEMENT_ISSUER_KEY_ENV)) {
+      say(`${ENTITLEMENT_ISSUER_KEY_FACT} goes in ${ENTITLEMENT_ISSUER_KEY_ENV}, where the SDK reads it, and nothing else does`);
+    }
   }
   if (runtime.facts && Object.values(runtime.facts).includes("page_origin") && !runtime.pages) {
     say("page_origin is a plug-in's own origin, which only one that serves pages has");
@@ -400,15 +408,23 @@ export function registrationOf(plugin: ListedPlugin): Record<string, unknown> {
     ...(plugin.hosts ? { kind: "declarative" } : { kind: "container", image: listing.image }),
     scope_ceiling: [...(listing.scopeCeiling ?? plugin.scopes ?? [])],
     ...(listing.compose ? { compose: { service: listing.compose.service, base_url: listing.compose.baseUrl } } : {}),
-    ...(listing.runtime ? { runtime: runtimeOf(listing.runtime) } : {}),
+    ...(listing.runtime ? { runtime: runtimeOf(listing.runtime, plugin.hooks?.entitlement !== undefined) } : {}),
   };
 }
 
-/** A runtime as the registry spells it. Variable names stay as they are; only field names change. */
-function runtimeOf(runtime: RuntimeDeclaration): Record<string, unknown> {
+/**
+ * A runtime as the registry spells it. Variable names stay as they are; only
+ * field names change. A plug-in with an `entitlement` hook is given billing's
+ * statement key whether or not it asked, so it can verify what the hook carries.
+ */
+function runtimeOf(runtime: RuntimeDeclaration, entitled: boolean): Record<string, unknown> {
   const defined = (entries: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== undefined));
-  const { health, database, metrics, integrations } = runtime;
+  const { health, database, metrics } = runtime;
+  const facts: Record<string, string> | undefined =
+    runtime.facts || entitled
+      ? { ...runtime.facts, ...(entitled ? { [ENTITLEMENT_ISSUER_KEY_ENV]: ENTITLEMENT_ISSUER_KEY_FACT } : {}) }
+      : undefined;
   return defined({
     name: runtime.name,
     port: runtime.port,
@@ -417,7 +433,7 @@ function runtimeOf(runtime: RuntimeDeclaration): Record<string, unknown> {
     migrates_on_start: runtime.migratesOnStart,
     pages: runtime.pages,
     public_paths: runtime.publicPaths && [...runtime.publicPaths],
-    facts: runtime.facts && { ...runtime.facts },
+    facts,
     settings: runtime.settings?.map((setting) => defined({ env: setting.env, required: setting.required })),
     signing_key: runtime.signingKey && { env: runtime.signingKey.env },
     database:
@@ -430,17 +446,5 @@ function runtimeOf(runtime: RuntimeDeclaration): Record<string, unknown> {
       }),
     secrets: runtime.secrets?.map((secret) => ({ id: secret.id, kind: secret.kind, env: secret.env })),
     metrics: metrics && { path: metrics.path, token_env: metrics.tokenEnv },
-    integrations:
-      integrations &&
-      defined({
-        billing:
-          integrations.billing &&
-          defined({
-            hmac_env: integrations.billing.hmacEnv,
-            hmac_previous_env: integrations.billing.hmacPreviousEnv,
-            public_key_env: integrations.billing.publicKeyEnv,
-          }),
-        bundled_channel: integrations.bundledChannel && { env: integrations.bundledChannel.env },
-      }),
   });
 }

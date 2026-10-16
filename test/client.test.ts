@@ -8,6 +8,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   ConsentRequiredError,
+  EntitlementStatementError,
+  EntitlementStatements,
+  entitlementMetrics,
   generatePluginKeys,
   Initiative,
   InitiativeApiError,
@@ -15,6 +18,7 @@ import {
   loadPrivateKey,
   MissingScopeError,
 } from "../src/client.js";
+import { BILLING_PUBLIC_PEM, statement, TRACKER_UID } from "./support/statement.js";
 
 const BASE = "https://initiative.example.com/api/v1";
 const TOKEN_URL = `${BASE}/plugin-platform/oauth/token`;
@@ -73,13 +77,16 @@ function decode(jwt: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf-8"));
 }
 
-const initiative = () =>
+const entitlements = new EntitlementStatements({ listingUid: TRACKER_UID, issuerKeyPem: BILLING_PUBLIC_PEM });
+
+const initiative = (options: { entitlements?: EntitlementStatements } = { entitlements }) =>
   new Initiative({
     baseUrl: `${BASE}/`,
     publicId: "acme.tracker",
     key: loadPrivateKey(keys.privateKeyPem, keys.kid),
     fetch: fetchImpl,
     now: () => clock,
+    ...options,
   });
 
 const tokenForms = () => sent.filter((one) => one.url === TOKEN_URL).map((one) => new URLSearchParams(one.body));
@@ -334,14 +341,35 @@ describe("the installation itself", () => {
     expect(tokenForms()).toHaveLength(1);
   });
 
-  it("reads the community's entitlement, and null when the issuer has made none", async () => {
+  it("reads the community's statement, verified, and null when billing has made none", async () => {
+    const before = entitlementMetrics().statements.applied ?? 0;
     answers.set("GET /api/v1/plugin-platform/installation/entitlement", () =>
-      json(200, { version: 4, values: { monthly_allowance: 30000 } })
+      json(200, { statement: statement({ version: 5, values: { monthly_allowance: 30000 } }) })
     );
     const client = initiative().asInstallation("gapp_1");
-    expect(await client.entitlement()).toEqual({ version: 4, values: { monthly_allowance: 30000 } });
+    expect(await client.entitlement()).toEqual({ version: 5, values: { monthly_allowance: 30000 } });
+    expect(entitlementMetrics().statements.applied).toBe(before + 1);
     answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(404, { detail: "NO_ENTITLEMENT" }));
     expect(await client.entitlement()).toBeNull();
+  });
+
+  it("refuses a statement that does not verify, and one that is not a statement", async () => {
+    const client = initiative().asInstallation("gapp_1");
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () =>
+      json(200, { statement: statement({ listing_uid: "M3N4P5Q6R7S8T9" }) })
+    );
+    await expect(client.entitlement()).rejects.toMatchObject({ name: "EntitlementStatementError", reason: "listing" });
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(200, { version: 4, values: {} }));
+    await expect(client.entitlement()).rejects.toBeInstanceOf(EntitlementStatementError);
+  });
+
+  it("refuses every statement under no issuer key, and cannot read one without a checker", async () => {
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(200, { statement: statement() }));
+    const keyless = new EntitlementStatements({ listingUid: TRACKER_UID, issuerKeyPem: null, warn: () => {} });
+    await expect(initiative({ entitlements: keyless }).asInstallation("gapp_1").entitlement()).rejects.toMatchObject({
+      reason: "no-key",
+    });
+    await expect(initiative({}).asInstallation("gapp_1").entitlement()).rejects.toBeInstanceOf(TypeError);
   });
 
   it("reports a meter's total for a period, and refuses a malformed report before sending it", async () => {

@@ -170,12 +170,81 @@ hooks: {
 - `community_status` runs whenever the community's standing changes. The same
   value rides every call as `community_status`, so a missed hook is caught up
   on the next call.
-- `entitlement` carries the deployment's statement of what this community
-  holds of the plug-in: `values`, whose keys are agreed between the plug-in
-  and the deployment's issuer, and a `version` that rises with each
-  statement. Statements can repeat or arrive out of order, so keep the
-  highest version you have seen and ignore a lower one. A deployment with no
-  issuer never sends one.
+- `entitlement` carries billing's statement of what this community holds of
+  the plug-in: `values`, whose keys are agreed between the plug-in and
+  billing, and a `version` that rises with each statement. Statements can
+  repeat or arrive out of order, so keep the highest version you have seen and
+  ignore a lower one. A deployment with no billing never sends one. The SDK
+  verifies each statement before your hook sees it: see
+  [Entitlement statements](#entitlement-statements).
+
+### Entitlement statements
+
+What a community holds of a plug-in (its allowance, the packs it bought) is
+decided by billing, not by Initiative. So that a compromised Initiative cannot
+grant itself an entitlement, billing signs each statement with a key of its
+own, Initiative stores the statement and hands it on verbatim, and your
+plug-in checks billing's signature. Initiative can withhold a statement; it
+cannot mint or change one.
+
+A statement is a compact JWS. Its header is
+`{"alg": "EdDSA", "typ": "initiative-entitlement+jwt", "kid": …}`, and its
+claims are `{"iss": "initiative-billing", "listing_uid", "community_ref",
+"version", "values", "iat"}`. It has no expiry: it holds until a higher
+version replaces it. The `entitlement` hook's body, and what
+`client.entitlement()` reads, are both `{"statement": "<jws>"}`.
+
+Billing's public key reaches your plug-in from the deployment, never from
+Initiative: it is the runtime fact `entitlement_issuer_key`, an SPKI PEM in
+`INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM`. `initiative-plugin build` adds that
+fact to the runtime of every plug-in with an `entitlement` hook, so you need
+not declare it, and refuses it under any other variable name.
+
+The SDK checks every statement, on the hook and on `client.entitlement()`, in
+this order, and refuses it at the first failure:
+
+1. the key is configured and is Ed25519; without one, every statement is
+   refused, and the plug-in logs why once;
+2. the header's `alg` is exactly `EdDSA` and its `typ` exactly
+   `initiative-entitlement+jwt`: the header never chooses the algorithm, so
+   `alg: none` or an HMAC trick goes nowhere;
+3. the Ed25519 signature over the JWS signing input;
+4. `iss` is `initiative-billing`, `listing_uid` is your plug-in's own `uid`,
+   `version` is a whole number of one or more, and `values` is an object.
+
+Only then is your hook called, with `version` and `values` taken from the
+verified claims and nothing else in the body. A refused statement is answered
+`422 {"error": "statement-refused", "detail": "<reason>"}` and never reaches
+your hook; `client.entitlement()` throws `EntitlementStatementError`, whose
+`reason` is one of `no-key`, `bad-key`, `malformed`, `alg`, `typ`,
+`signature`, `iss`, `listing` or `claims`.
+
+**What it does not cover.** `community_ref` is billing's own pairwise
+reference for the community, which your plug-in cannot relate to the
+`installation` Initiative names. Initiative still vouches for which community a
+statement is for, so a compromised Initiative could at worst copy a real,
+signed statement from one community onto another. That gap is accepted.
+
+**Alerts.** The SDK counts, for the process's life:
+
+- every statement by outcome, `applied` (verified and handed on) or
+  `refused-<reason>`;
+- every grant of an unlimited allowance (`monthly_allowance: null`) to a
+  community whose last statement the process saw did not grant one. The memory
+  is the process's own, so after a restart the first such statement counts
+  again.
+
+`entitlementMetrics()` answers them as an object, and `entitlementMetricsText()`
+in the Prometheus text format, to append to what your metrics endpoint serves:
+`initiative_plugin_entitlement_statements_total{outcome="…"}` and
+`initiative_plugin_entitlement_unlimited_grants_total`. Alert on any
+`refused-*` and on any rise in unlimited grants. Neither ever refuses a
+correctly signed statement.
+
+**If you self-host.** A deployment that runs billing mints its statement
+keypair and fills `INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM` for each plug-in that
+declares the fact. A deployment with no billing leaves it unset: it sends no
+statements, and any that did arrive would be refused.
 
 ### The vendor's own setup
 
@@ -499,6 +568,11 @@ for (const { installation, active } of await initiative.installations()) {
 }
 ```
 
+An `Initiative` made by hand reads `client.entitlement()` only when it is given
+something to check statements with: `entitlements: new EntitlementStatements({
+listingUid: plugin.uid })`, which reads billing's key from
+`INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM`. The server's own client has one.
+
 - `asInstallation(installation, { initiative, scopes })` acts as the community,
   optionally narrowed to one initiative the plug-in is placed in and fewer scopes.
 - `asMember(installation, member, { purpose, initiative })` acts for one
@@ -540,7 +614,8 @@ for (const { installation, active } of await initiative.installations()) {
   token, `client.reportConfigStatus({ state, detail })`, and
   `client.emitEvent({ eventType, payload, initiativeId })`.
 - What the community holds of the plug-in: `client.entitlement()` reads the
-  statement the `entitlement` hook delivers, or null when there is none, and
+  statement the `entitlement` hook delivers, verified the same way, or null
+  when there is none, and
   `client.reportUsage({ meter, period, quantity })` reports a meter's total
   for one `YYYY-MM` period. The total is the whole period's, never an
   increment, so repeating a report is harmless. Only meters the deployment
@@ -620,7 +695,11 @@ It holds nothing that raises a privilege. Resources, network rules, hostnames
 and every key and password stay the deployment's:
 
 - `facts` come from a fixed list: `app_url`, `app_origin`, `app_api_public`,
-  `app_api_internal`, `page_origin` and `port`.
+  `app_api_internal`, `page_origin`, `port` and `entitlement_issuer_key`
+  (billing's statement key, added for you with an `entitlement` hook; see
+  [Entitlement statements](#entitlement-statements)). There is no other
+  channel to Initiative's own services: billing reaches a plug-in only through
+  Initiative.
 - `settings` are names the operator fills.
 - `secrets` are generated by the deployment and kept.
 

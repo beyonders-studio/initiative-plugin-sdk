@@ -36,6 +36,7 @@ import {
 import type { ActorKind, ItemKind, PluginScope, Scope } from "./contract.js";
 import type { Actor, ItemRef } from "./define.js";
 import { signJwt, type PluginSigningKey } from "./keys.js";
+import type { EntitlementStatements } from "./statements.js";
 
 export {
   generatePluginKeys,
@@ -48,6 +49,16 @@ export {
   type PublicJwk,
 } from "./keys.js";
 export type { PluginApi, PluginApiSchemas } from "./plugin-api.generated.js";
+export {
+  ENTITLEMENT_ISSUER_KEY_ENV,
+  EntitlementStatementError,
+  EntitlementStatements,
+  entitlementMetrics,
+  entitlementMetricsText,
+  type EntitlementMetrics,
+  type EntitlementRefusal,
+  type EntitlementStatementsOptions,
+} from "./statements.js";
 
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 const JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer";
@@ -71,6 +82,12 @@ export interface InitiativeOptions {
   fetch?: typeof fetch;
   /** Milliseconds since the epoch. */
   now?: () => number;
+  /**
+   * Checks billing's signed entitlement statements, for
+   * {@link Client.entitlement}. The plug-in's server gives its own; without
+   * one, `entitlement()` cannot be read.
+   */
+  entitlements?: EntitlementStatements;
 }
 
 /** Narrowing for a token: fewer scopes than were granted, and one initiative. */
@@ -182,8 +199,9 @@ export interface InstallationEvent {
 }
 
 /**
- * What the deployment's entitlement issuer says this community holds of the
- * plug-in: the statement the `entitlement` hook carries, read on demand.
+ * What billing says this community holds of the plug-in: the signed statement
+ * the `entitlement` hook carries, read on demand, verified, and taken from its
+ * claims.
  */
 export interface Entitlement {
   /** Rises with every new statement for the community. */
@@ -316,9 +334,11 @@ class Tokens {
   private readonly inflight = new Map<string, Promise<AccessToken>>();
   readonly fetch: typeof fetch;
   readonly now: () => number;
+  readonly entitlements: EntitlementStatements | undefined;
 
   constructor(private readonly options: InitiativeOptions) {
     if (!options.publicId) throw new TypeError("publicId is the plug-in's public id");
+    this.entitlements = options.entitlements;
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.endpoint = `${this.baseUrl}/plugin-platform/oauth/token`;
     this.fetch = options.fetch ?? fetch;
@@ -692,12 +712,15 @@ export class Client {
   }
 
   /**
-   * The current entitlement statement for this community, or null when the
-   * deployment's issuer has made none. The same statement the `entitlement`
-   * hook delivers: read it to catch up after a restart, or when the hook has
-   * not come.
+   * The current entitlement statement for this community, or null when billing
+   * has made none. The same signed statement the `entitlement` hook delivers,
+   * verified the same way: read it to catch up after a restart, or when the
+   * hook has not come. A statement that does not verify throws
+   * {@link EntitlementStatementError}.
    */
   async entitlement(): Promise<Entitlement | null> {
+    const statements = this.tokens.entitlements;
+    if (!statements) throw new TypeError("reading an entitlement needs `entitlements` on the Initiative options");
     let body: unknown;
     try {
       body = await this.installationCall("GET", "/entitlement");
@@ -705,10 +728,7 @@ export class Client {
       if (error instanceof InitiativeApiError && error.status === 404) return null;
       throw error;
     }
-    if (!isRecord(body) || typeof body.version !== "number" || !isRecord(body.values)) {
-      throw new InitiativeApiError(200, "entitlement: not a statement");
-    }
-    return { version: body.version, values: body.values };
+    return statements.verify(isRecord(body) ? body.statement : undefined, this.grant.installation);
   }
 
   /**

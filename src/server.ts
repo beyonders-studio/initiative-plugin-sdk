@@ -49,6 +49,16 @@ import {
   type VerifyOptions,
 } from "./tokens.js";
 import { pluginDocument, MANIFEST_PATH } from "./validate.js";
+import { ENTITLEMENT_ISSUER_KEY_ENV, EntitlementStatementError, EntitlementStatements } from "./statements.js";
+
+export {
+  ENTITLEMENT_ISSUER_KEY_ENV,
+  EntitlementStatementError,
+  entitlementMetrics,
+  entitlementMetricsText,
+  type EntitlementMetrics,
+  type EntitlementRefusal,
+} from "./statements.js";
 
 export type {
   Actor,
@@ -146,7 +156,12 @@ export function createPlugin(
   for (const jwk of served.keys) log.info(`plug-in key fingerprint: ${jwkThumbprint(jwk)} (kid ${jwk.kid})`);
   const jwks = JSON.stringify(served);
 
-  const initiative = new Initiative({ baseUrl, publicId: plugin.publicId, key, fetch: fetchImpl, now });
+  const entitlements = new EntitlementStatements({
+    listingUid: plugin.uid,
+    issuerKeyPem: env[ENTITLEMENT_ISSUER_KEY_ENV] ?? null,
+    warn: (message) => log.warn(message),
+  });
+  const initiative = new Initiative({ baseUrl, publicId: plugin.publicId, key, fetch: fetchImpl, now, entitlements });
   const verify: VerifyOptions = { publicId: plugin.publicId, baseUrl, jwks: new JwksCache({ fetchImpl, now }), now };
   const endpoints = new Map<string, Exclude<EndpointDeclaration, { map: string }>>(
     Object.entries(plugin.endpoints ?? {}).flatMap(([name, endpoint]) =>
@@ -295,10 +310,15 @@ export function createPlugin(
       return answered(() => hooks.community_status!({ ...call, status: status as CommunityStatus }), "community_status");
     }
     if (name === "entitlement") {
-      const { version, values } = raw;
-      if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 || !isRecord(values)) {
-        return refuse(400, "invalid-request", "not an entitlement call");
+      // Billing's signed statement, checked against billing's key: nothing else in the body is read.
+      let verified;
+      try {
+        verified = entitlements.verify(raw.statement, call.installation);
+      } catch (error) {
+        if (error instanceof EntitlementStatementError) return refuse(422, "statement-refused", error.reason);
+        throw error;
       }
+      const { version, values } = verified;
       return answered(() => hooks.entitlement!({ ...call, version, values }), `entitlement v${version}`);
     }
     return answered(() => hooks[name]!(call), name);
