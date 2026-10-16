@@ -12,15 +12,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { manifestOf } from "../src/define.js";
-import { generatePluginKeys, jwkThumbprint, loadPrivateKey, signJwt } from "../src/keys.js";
+import { generatePluginKeys, jwkThumbprint } from "../src/keys.js";
+import { generatePlatformKey, loadPlatformKey, signPlatformJwt } from "./support/platform-key.js";
 import { createPlugin, serve, type PluginHandler } from "../src/server.js";
 import { CONTEXT_TOKEN_TYPE, HANDOFF_TOKEN_TYPE } from "../src/tokens.js";
 import { issuesPlugin, trackerPlugin } from "./support/plugin.js";
 
 const BASE = "https://initiative.example.com/api/v1";
-const platform = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
-const stranger = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
-const pluginKeys = generatePluginKeys({ alg: "ES256", kid: "plugin-1" });
+const platform = generatePlatformKey("platform-1");
+const stranger = generatePlatformKey("platform-1");
+const pluginKeys = generatePluginKeys({ kid: "plugin-1" });
 const MODULES = { "open-count": "globalThis.render = function () {};" };
 
 function sign(
@@ -29,7 +30,7 @@ function sign(
   typ = CONTEXT_TOKEN_TYPE
 ): string {
   const now = Math.floor(Date.now() / 1000);
-  return signJwt(loadPrivateKey(pem, "platform-1"), {
+  return signPlatformJwt(loadPlatformKey(pem, "platform-1"), {
     jti: randomUUID(),
     iss: "initiative",
     aud: "initiative-plugin:acme.tracker",
@@ -108,7 +109,7 @@ describe("what the plug-in publishes", () => {
   it("serves its public key, and nothing private", async () => {
     const jwks = await read(get("/.well-known/jwks.json"));
     expect(jwks.keys).toHaveLength(1);
-    expect(jwks.keys[0]).toMatchObject({ kid: "plugin-1", kty: "EC", alg: "ES256" });
+    expect(jwks.keys[0]).toMatchObject({ kid: "plugin-1", kty: "OKP", crv: "Ed25519", alg: "EdDSA" });
     expect(jwks.keys[0]).not.toHaveProperty("d");
   });
 

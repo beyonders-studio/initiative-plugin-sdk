@@ -7,7 +7,7 @@
  *   initiative-plugin build [--plugin <file> | --manifest <file>] [--registry <dir>] [--check]
  *   initiative-plugin pack [--plugin <file> | --manifest <file>] [--out <file>]
  *   initiative-plugin dev --initiative <url> [--api-key <key>] [--plugin <file>]
- *   initiative-plugin keygen [--alg RS256|ES256|EdDSA] [--kid <id>] [--out <dir>]
+ *   initiative-plugin keygen [--kid <id>] [--out <dir>]
  *   initiative-plugin validate <file.json>   a manifest, or a served manifest document
  *   initiative-plugin schema                 print the schema a manifest is checked against
  *   initiative-plugin uid                    mint a catalog uid
@@ -19,7 +19,7 @@
  * deployment publishes as its own plug-in (`pack.ts`), and `dev` uploads it to one
  * and again on each change (`dev.ts`); its key may be given as
  * `INITIATIVE_API_KEY` instead. `init` copies an example (`init.ts`).
- * `keygen` writes `private-key.pem` (mode 0600) and `jwks.json`
+ * `keygen` writes an Ed25519 `private-key.pem` (mode 0600) and `jwks.json`
  * into `--out` and refuses to overwrite either.
  */
 
@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { build } from "./build.js";
 import { dev } from "./dev.js";
 import { init, mintUid } from "./init.js";
-import { generatePluginKeys, type PluginKeyAlgorithm } from "./keys.js";
+import { generatePluginKeys } from "./keys.js";
 import { pack } from "./pack.js";
 import { manifestSchema, validateDocument, validateManifest } from "./validate.js";
 
@@ -41,7 +41,7 @@ function usage(): never {
       "  initiative-plugin build [--plugin <file> | --manifest <file>] [--registry <dir>] [--check]",
       "  initiative-plugin pack [--plugin <file> | --manifest <file>] [--out <file>]",
       "  initiative-plugin dev --initiative <url> [--api-key <key>] [--plugin <file>]",
-      "  initiative-plugin keygen [--alg RS256|ES256|EdDSA] [--kid <id>] [--out <dir>]",
+      "  initiative-plugin keygen [--kid <id>] [--out <dir>]",
       "  initiative-plugin validate <file.json>",
       "  initiative-plugin schema",
       "  initiative-plugin uid",
@@ -67,12 +67,7 @@ function flags(args: string[], values: string[], switches: string[] = []): Recor
 }
 
 function keygen(args: string[]): number {
-  const options = flags(args, ["alg", "kid", "out"]) as Record<string, string>;
-  const alg = (options.alg ?? "RS256") as PluginKeyAlgorithm;
-  if (alg !== "RS256" && alg !== "ES256" && alg !== "EdDSA") {
-    process.stderr.write(`unsupported --alg ${alg}: use RS256, ES256 or EdDSA\n`);
-    return 2;
-  }
+  const options = flags(args, ["kid", "out"]) as Record<string, string>;
   const dir = options.out ?? ".";
   const keyPath = join(dir, "private-key.pem");
   const jwksPath = join(dir, "jwks.json");
@@ -82,7 +77,7 @@ function keygen(args: string[]): number {
       return 1;
     }
   }
-  const keys = generatePluginKeys({ alg, ...(options.kid ? { kid: options.kid } : {}) });
+  const keys = generatePluginKeys(options.kid ? { kid: options.kid } : {});
   mkdirSync(dir, { recursive: true });
   writeFileSync(keyPath, keys.privateKeyPem, { mode: 0o600, flag: "wx" });
   writeFileSync(jwksPath, `${JSON.stringify(keys.jwks, null, 2)}\n`, { flag: "wx" });
@@ -91,7 +86,7 @@ function keygen(args: string[]): number {
       `wrote ${keyPath} (keep it secret)`,
       `wrote ${jwksPath} (the public half, for the plug-in's listing or a deployment's operator)`,
       `kid: ${keys.kid}`,
-      `alg: ${keys.alg}`,
+      "alg: EdDSA (Ed25519)",
       "",
     ].join("\n")
   );

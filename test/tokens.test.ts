@@ -18,13 +18,14 @@ import {
   verifyLifecycleToken,
 } from "../src/tokens.js";
 import { generatePluginKeys, loadPrivateKey, signJwt } from "../src/keys.js";
+import { generatePlatformKey, loadPlatformKey, signPlatformJwt } from "./support/platform-key.js";
 
 const BASE = "https://initiative.example.com";
 const PUBLIC_ID = "acme.tracker";
 const NOW = 1_780_000_000;
 
-const platform = generatePluginKeys({ alg: "RS256", kid: "platform-1" });
-const signing = loadPrivateKey(platform.privateKeyPem, "platform-1");
+const platform = generatePlatformKey("platform-1");
+const signing = loadPlatformKey(platform.privateKeyPem, "platform-1");
 
 function jwksFetch(documents: Array<{ keys: unknown[] }> = [platform.jwks]) {
   const urls: string[] = [];
@@ -81,7 +82,7 @@ async function refusal(promise: Promise<unknown>): Promise<string> {
 describe("verifyContextToken", () => {
   it("returns the claims of a token Initiative signed for this plug-in", async () => {
     const { urls, fetchImpl } = jwksFetch();
-    const token = signJwt(signing, contextClaims({ connection_refs: { account: "ref-1" } }), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, contextClaims({ connection_refs: { account: "ref-1" } }), CONTEXT_TOKEN_TYPE);
     const verified = await verifyContextToken(token, options(fetchImpl));
     expect(verified).toMatchObject({
       community_ref: "gapp_abc",
@@ -96,7 +97,7 @@ describe("verifyContextToken", () => {
 
   it("names the calling plug-in, the actor and the member on a call from another plug-in", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(
+    const token = signPlatformJwt(
       signing,
       contextClaims({
         act: { sub: "acme.automations" },
@@ -116,7 +117,7 @@ describe("verifyContextToken", () => {
 
   it("leaves the caller claims absent on Initiative's own call", async () => {
     const { fetchImpl } = jwksFetch();
-    const verified = await verifyContextToken(signJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), options(fetchImpl));
+    const verified = await verifyContextToken(signPlatformJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), options(fetchImpl));
     expect(verified.act).toBeUndefined();
     expect(verified.actor).toBeUndefined();
     expect(verified.member).toBeUndefined();
@@ -131,14 +132,14 @@ describe("verifyContextToken", () => {
       [{ actor: "member" }, "a member call names no member"],
       [{ initiative_id: 0 }, "initiative_id is not an initiative"],
     ] as const) {
-      const token = signJwt(signing, contextClaims(extra), CONTEXT_TOKEN_TYPE);
+      const token = signPlatformJwt(signing, contextClaims(extra), CONTEXT_TOKEN_TYPE);
       expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toBe(message);
     }
   });
 
   it("finds the JWKS from the API base too", async () => {
     const { urls, fetchImpl } = jwksFetch();
-    await verifyContextToken(signJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), {
+    await verifyContextToken(signPlatformJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), {
       ...options(fetchImpl),
       baseUrl: `${BASE}/api/v1`,
     });
@@ -147,7 +148,7 @@ describe("verifyContextToken", () => {
 
   it("refuses a token for another plug-in", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, contextClaims({ aud: audienceFor("other.plugin") }), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, contextClaims({ aud: audienceFor("other.plugin") }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain(
       "initiative-plugin:other.plugin"
     );
@@ -155,7 +156,7 @@ describe("verifyContextToken", () => {
 
   it("refuses another issuer", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, contextClaims({ iss: "someone-else" }), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, contextClaims({ iss: "someone-else" }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain(
       "someone-else"
     );
@@ -163,18 +164,18 @@ describe("verifyContextToken", () => {
 
   it("refuses an expired token, and one not valid yet, beyond the leeway", async () => {
     const { fetchImpl } = jwksFetch();
-    const expired = signJwt(signing, contextClaims({ iat: NOW - 120, exp: NOW - 31 }), CONTEXT_TOKEN_TYPE);
+    const expired = signPlatformJwt(signing, contextClaims({ iat: NOW - 120, exp: NOW - 31 }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(expired, options(fetchImpl)))).toContain("expired");
-    const early = signJwt(signing, contextClaims({ iat: NOW + 31, exp: NOW + 90 }), CONTEXT_TOKEN_TYPE);
+    const early = signPlatformJwt(signing, contextClaims({ iat: NOW + 31, exp: NOW + 90 }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(early, options(fetchImpl)))).toContain("not valid yet");
-    const withinLeeway = signJwt(signing, contextClaims({ iat: NOW - 90, exp: NOW - 29 }), CONTEXT_TOKEN_TYPE);
+    const withinLeeway = signPlatformJwt(signing, contextClaims({ iat: NOW - 90, exp: NOW - 29 }), CONTEXT_TOKEN_TYPE);
     await expect(verifyContextToken(withinLeeway, options(fetchImpl))).resolves.toBeTruthy();
   });
 
   it("refuses a signature by a key the deployment did not publish", async () => {
     const { fetchImpl } = jwksFetch();
-    const stranger = generatePluginKeys({ alg: "RS256" });
-    const token = signJwt(loadPrivateKey(stranger.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
+    const stranger = generatePlatformKey("platform-1");
+    const token = signPlatformJwt(loadPlatformKey(stranger.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain(
       "did not verify"
     );
@@ -182,14 +183,14 @@ describe("verifyContextToken", () => {
 
   it("refuses any algorithm but RS256", async () => {
     const { fetchImpl } = jwksFetch();
-    const ec = generatePluginKeys({ alg: "ES256", kid: "platform-1" });
-    const token = signJwt(loadPrivateKey(ec.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
-    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("ES256");
+    const plugin = generatePluginKeys({ kid: "platform-1" });
+    const token = signJwt(loadPrivateKey(plugin.privateKeyPem, "platform-1"), contextClaims(), CONTEXT_TOKEN_TYPE);
+    expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("EdDSA");
   });
 
   it("refuses a handoff token presented as a context token", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, handoffClaims(), HANDOFF_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, handoffClaims(), HANDOFF_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toBe(
       `token is typed ${HANDOFF_TOKEN_TYPE}, not ${CONTEXT_TOKEN_TYPE}`
     );
@@ -197,7 +198,7 @@ describe("verifyContextToken", () => {
 
   it("refuses a token that is not typed as one of Initiative's", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, contextClaims());
+    const token = signPlatformJwt(signing, contextClaims());
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toBe(
       `token is typed JWT, not ${CONTEXT_TOKEN_TYPE}`
     );
@@ -205,7 +206,7 @@ describe("verifyContextToken", () => {
 
   it("refuses a context token that names no scope", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, handoffClaims(), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, handoffClaims(), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain(
       "not a context token"
     );
@@ -214,7 +215,7 @@ describe("verifyContextToken", () => {
   it("refuses a token naming no community status, or one it does not know", async () => {
     const { fetchImpl } = jwksFetch();
     for (const community_status of [undefined, "archived"]) {
-      const token = signJwt(signing, contextClaims({ community_status }), CONTEXT_TOKEN_TYPE);
+      const token = signPlatformJwt(signing, contextClaims({ community_status }), CONTEXT_TOKEN_TYPE);
       expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("unknown community status");
     }
   });
@@ -226,19 +227,19 @@ describe("verifyContextToken", () => {
   });
 
   it("refetches once for an unknown kid, so a rotation resolves", async () => {
-    const next = generatePluginKeys({ alg: "RS256", kid: "platform-2" });
+    const next = generatePlatformKey("platform-2");
     const both = { keys: [...platform.jwks.keys, ...next.jwks.keys] };
     const { urls, fetchImpl } = jwksFetch([platform.jwks, both]);
     const opts = options(fetchImpl);
 
-    await verifyContextToken(signJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), opts);
-    const rotated = signJwt(loadPrivateKey(next.privateKeyPem, "platform-2"), contextClaims(), CONTEXT_TOKEN_TYPE);
+    await verifyContextToken(signPlatformJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), opts);
+    const rotated = signPlatformJwt(loadPlatformKey(next.privateKeyPem, "platform-2"), contextClaims(), CONTEXT_TOKEN_TYPE);
     await verifyContextToken(rotated, opts);
     expect(urls).toHaveLength(2);
 
     // A kid nobody published, against a set that was itself refetched in this
     // window: refused without another fetch.
-    const unknown = signJwt(loadPrivateKey(next.privateKeyPem, "platform-9"), contextClaims(), CONTEXT_TOKEN_TYPE);
+    const unknown = signPlatformJwt(loadPlatformKey(next.privateKeyPem, "platform-9"), contextClaims(), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyContextToken(unknown, opts))).toContain("platform-9");
     expect(await refusal(verifyContextToken(unknown, opts))).toContain("platform-9");
     expect(urls).toHaveLength(2);
@@ -248,7 +249,7 @@ describe("verifyContextToken", () => {
 describe("verifyHandoffToken", () => {
   it("refuses a context token presented as a handoff", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, handoffClaims(), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, handoffClaims(), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyHandoffToken(token, options(fetchImpl)))).toBe(
       `token is typed ${CONTEXT_TOKEN_TYPE}, not ${HANDOFF_TOKEN_TYPE}`
     );
@@ -256,7 +257,7 @@ describe("verifyHandoffToken", () => {
 
   it("returns the member, the page and the initiative", async () => {
     const { fetchImpl } = jwksFetch();
-    const verified = await verifyHandoffToken(signJwt(signing, handoffClaims(), HANDOFF_TOKEN_TYPE), options(fetchImpl));
+    const verified = await verifyHandoffToken(signPlatformJwt(signing, handoffClaims(), HANDOFF_TOKEN_TYPE), options(fetchImpl));
     expect(verified).toMatchObject({
       sub: "uapp_alice",
       surface_id: "panel",
@@ -270,7 +271,7 @@ describe("verifyHandoffToken", () => {
 
   it("takes a community-level opening with no initiative", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, handoffClaims({ initiative_id: undefined }), HANDOFF_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, handoffClaims({ initiative_id: undefined }), HANDOFF_TOKEN_TYPE);
     const verified = await verifyHandoffToken(token, options(fetchImpl));
     expect(verified.initiative_id).toBeUndefined();
   });
@@ -279,13 +280,13 @@ describe("verifyHandoffToken", () => {
     const { fetchImpl } = jwksFetch();
     expect(
       await refusal(
-        verifyHandoffToken(signJwt(signing, handoffClaims({ sub: undefined }), HANDOFF_TOKEN_TYPE), options(fetchImpl))
+        verifyHandoffToken(signPlatformJwt(signing, handoffClaims({ sub: undefined }), HANDOFF_TOKEN_TYPE), options(fetchImpl))
       )
     ).toContain("no member");
     expect(
       await refusal(
         verifyHandoffToken(
-          signJwt(signing, handoffClaims({ surface_id: undefined }), HANDOFF_TOKEN_TYPE),
+          signPlatformJwt(signing, handoffClaims({ surface_id: undefined }), HANDOFF_TOKEN_TYPE),
           options(fetchImpl)
         )
       )
@@ -294,7 +295,7 @@ describe("verifyHandoffToken", () => {
 
   it("checks the audience like a context token", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, handoffClaims({ aud: audienceFor("other.plugin") }), HANDOFF_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, handoffClaims({ aud: audienceFor("other.plugin") }), HANDOFF_TOKEN_TYPE);
     await expect(verifyHandoffToken(token, options(fetchImpl))).rejects.toThrow(
       ContextTokenError
     );
@@ -304,7 +305,7 @@ describe("verifyHandoffToken", () => {
 describe("verifyLifecycleToken", () => {
   it("returns the claims of a hook call, naming the hook", async () => {
     const { fetchImpl } = jwksFetch();
-    const verified = await verifyLifecycleToken(signJwt(signing, lifecycleClaims(), CONTEXT_TOKEN_TYPE), {
+    const verified = await verifyLifecycleToken(signPlatformJwt(signing, lifecycleClaims(), CONTEXT_TOKEN_TYPE), {
       ...options(fetchImpl),
       hook: "after_connect",
     });
@@ -320,13 +321,13 @@ describe("verifyLifecycleToken", () => {
   it("refuses an endpoint token", async () => {
     const { fetchImpl } = jwksFetch();
     expect(
-      await refusal(verifyLifecycleToken(signJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), options(fetchImpl)))
+      await refusal(verifyLifecycleToken(signPlatformJwt(signing, contextClaims(), CONTEXT_TOKEN_TYPE), options(fetchImpl)))
     ).toMatch(/not a lifecycle token/);
   });
 
   it("refuses a token minted for another hook", async () => {
     const { fetchImpl } = jwksFetch();
-    const token = signJwt(signing, lifecycleClaims({ hook: "revoke" }), CONTEXT_TOKEN_TYPE);
+    const token = signPlatformJwt(signing, lifecycleClaims({ hook: "revoke" }), CONTEXT_TOKEN_TYPE);
     expect(
       await refusal(verifyLifecycleToken(token, { ...options(fetchImpl), hook: "after_connect" }))
     ).toMatch(/for hook revoke, not after_connect/);
@@ -334,11 +335,11 @@ describe("verifyLifecycleToken", () => {
 
   it("checks the audience and the clock like a context token", async () => {
     const { fetchImpl } = jwksFetch();
-    const elsewhere = signJwt(signing, lifecycleClaims({ aud: audienceFor("acme.other") }), CONTEXT_TOKEN_TYPE);
+    const elsewhere = signPlatformJwt(signing, lifecycleClaims({ aud: audienceFor("acme.other") }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyLifecycleToken(elsewhere, options(fetchImpl)))).toMatch(
       /is for initiative-plugin:acme.other/
     );
-    const stale = signJwt(signing, lifecycleClaims({ iat: NOW - 900, exp: NOW - 600 }), CONTEXT_TOKEN_TYPE);
+    const stale = signPlatformJwt(signing, lifecycleClaims({ iat: NOW - 900, exp: NOW - 600 }), CONTEXT_TOKEN_TYPE);
     expect(await refusal(verifyLifecycleToken(stale, options(fetchImpl)))).toMatch(/expired/);
   });
 });

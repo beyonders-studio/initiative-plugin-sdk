@@ -435,7 +435,7 @@ refusal answers `{ "error": code, "detail": sentence }`.
 | `context` | | Handed to every handler as `context`. |
 | `fetch`, `now`, `log`, `env` | | For tests and other runtimes. |
 
-**The plug-in's key.** With no key given, the plug-in generates an ES256 key the first
+**The plug-in's key.** With no key given, the plug-in generates an Ed25519 key the first
 time it starts, keeps it, and serves its public half at
 `/.well-known/jwks.json`. The deployment running it registers that JWKS with
 Initiative, beside where the plug-in runs, in its `PLUGIN_SERVICES_CONFIG` entry or
@@ -452,18 +452,17 @@ two can be compared. `jwkThumbprint` from `initiative-plugin-sdk/client` compute
 it for a JWKS entry. To bring your own key:
 
 ```sh
-npx initiative-plugin keygen --alg ES256 --out ./secrets
+npx initiative-plugin keygen --out ./secrets
 ```
 
 `private-key.pem` (mode 0600) stays with the plug-in; `jwks.json` is its public
 half. To rotate, publish a JWKS holding both keys, switch the plug-in to the new
 one, then drop the old entry.
 
-`--alg` takes `EdDSA` (Ed25519), `ES256` (P-256) or `RS256` (RSA). Prefer
-`EdDSA` where the deployment's Initiative verifies it: Ed25519 signatures are
-deterministic, so there is no per-signature nonce whose reuse or bias would give
-the key away, as there is with ES256. A deployment that runs the plug-in from
-its package mints an Ed25519 key for it.
+Every plug-in key is Ed25519, signing EdDSA. Its signatures are deterministic,
+so there is no per-signature nonce whose reuse or bias would give the key away.
+`loadPrivateKey` refuses any other kind of key. A deployment that runs the
+plug-in from its package mints the key for it.
 
 **Context.** Your own services reach handlers as `context`. Say what it holds
 once:

@@ -422,7 +422,7 @@ function pluginKey(options: PluginOptions, env: Record<string, string | undefine
   const path = join(dir, "plugin-key.pem");
   if (!existsSync(path)) {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path, generatePluginKeys({ alg: "ES256" }).privateKeyPem, { mode: 0o600, flag: "wx" });
+    writeFileSync(path, generatePluginKeys().privateKeyPem, { mode: 0o600, flag: "wx" });
   }
   return loadPrivateKey(readFileSync(path, "utf-8"));
 }
