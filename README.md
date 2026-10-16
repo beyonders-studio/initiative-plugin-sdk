@@ -517,6 +517,7 @@ listing: {
   summary: "Your tracker's tickets on a dashboard and in your automations.",
   description: "…",
   avatar: "assets/avatar.png",
+  images: [{ path: "assets/board.png", alt: "Open tickets on a dashboard" }],
   version: "1.2.0",
   minAppVersion: "0.72.0",
   releaseNotes: "…",
@@ -531,6 +532,13 @@ listing: {
   },
 },
 ```
+
+`images` is optional: the screenshots on the listing page, in order, at most
+12. Each is a PNG, JPEG, WebP, GIF, AVIF or SVG file with `alt` text of 1 to
+300 characters for someone who cannot see it, and a file name of its own (the
+avatar sits beside them in the registry source). The registry signs each one
+by its digest, as it does the avatar. `pack` leaves them out: a deployment's
+own listing upload takes only the avatar.
 
 `compose` is optional: the Docker Compose service an operator copies to run
 your image beside Initiative, which Initiative shows on the plug-in's settings
