@@ -7,7 +7,7 @@
  *   initiative-plugin build [--plugin <file> | --manifest <file>] [--registry <dir>] [--check]
  *   initiative-plugin pack [--plugin <file> | --manifest <file>] [--out <file>]
  *   initiative-plugin dev --initiative <url> [--api-key <key>] [--plugin <file>]
- *   initiative-plugin keygen [--alg RS256|ES256] [--kid <id>] [--out <dir>]
+ *   initiative-plugin keygen [--alg RS256|ES256|EdDSA] [--kid <id>] [--out <dir>]
  *   initiative-plugin validate <file.json>   a manifest, or a served manifest document
  *   initiative-plugin schema                 print the schema a manifest is checked against
  *   initiative-plugin uid                    mint a catalog uid
@@ -41,7 +41,7 @@ function usage(): never {
       "  initiative-plugin build [--plugin <file> | --manifest <file>] [--registry <dir>] [--check]",
       "  initiative-plugin pack [--plugin <file> | --manifest <file>] [--out <file>]",
       "  initiative-plugin dev --initiative <url> [--api-key <key>] [--plugin <file>]",
-      "  initiative-plugin keygen [--alg RS256|ES256] [--kid <id>] [--out <dir>]",
+      "  initiative-plugin keygen [--alg RS256|ES256|EdDSA] [--kid <id>] [--out <dir>]",
       "  initiative-plugin validate <file.json>",
       "  initiative-plugin schema",
       "  initiative-plugin uid",
@@ -69,8 +69,8 @@ function flags(args: string[], values: string[], switches: string[] = []): Recor
 function keygen(args: string[]): number {
   const options = flags(args, ["alg", "kid", "out"]) as Record<string, string>;
   const alg = (options.alg ?? "RS256") as PluginKeyAlgorithm;
-  if (alg !== "RS256" && alg !== "ES256") {
-    process.stderr.write(`unsupported --alg ${alg}: use RS256 or ES256\n`);
+  if (alg !== "RS256" && alg !== "ES256" && alg !== "EdDSA") {
+    process.stderr.write(`unsupported --alg ${alg}: use RS256, ES256 or EdDSA\n`);
     return 2;
   }
   const dir = options.out ?? ".";

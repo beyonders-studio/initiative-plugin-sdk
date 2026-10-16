@@ -459,6 +459,12 @@ npx initiative-plugin keygen --alg ES256 --out ./secrets
 half. To rotate, publish a JWKS holding both keys, switch the plug-in to the new
 one, then drop the old entry.
 
+`--alg` takes `EdDSA` (Ed25519), `ES256` (P-256) or `RS256` (RSA). Prefer
+`EdDSA` where the deployment's Initiative verifies it: Ed25519 signatures are
+deterministic, so there is no per-signature nonce whose reuse or bias would give
+the key away, as there is with ES256. A deployment that runs the plug-in from
+its package mints an Ed25519 key for it.
+
 **Context.** Your own services reach handlers as `context`. Say what it holds
 once:
 

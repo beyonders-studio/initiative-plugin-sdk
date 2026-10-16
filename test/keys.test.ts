@@ -3,7 +3,7 @@
  * verifies with the JWKS the operator registers.
  */
 
-import { createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -26,12 +26,13 @@ function verifiesWith(token: string, jwk: Record<string, unknown>): boolean {
   const key = createPublicKey({ key: jwk as never, format: "jwk" });
   const input = Buffer.from(`${header}.${payload}`);
   const raw = Buffer.from(signature, "base64url");
+  if (jwk.kty === "OKP") return verify(null, input, key, raw);
   return jwk.kty === "EC"
     ? verify("sha256", input, { key, dsaEncoding: "ieee-p1363" }, raw)
     : verify("sha256", input, key, raw);
 }
 
-describe.each<PluginKeyAlgorithm>(["RS256", "ES256"])("%s keys", (alg) => {
+describe.each<PluginKeyAlgorithm>(["RS256", "ES256", "EdDSA"])("%s keys", (alg) => {
   const keys = generatePluginKeys({ alg });
 
   it("writes a PKCS#8 private key and a one-entry JWKS", () => {
@@ -40,7 +41,7 @@ describe.each<PluginKeyAlgorithm>(["RS256", "ES256"])("%s keys", (alg) => {
     expect(keys.jwks.keys).toHaveLength(1);
     const [entry] = keys.jwks.keys;
     expect(entry).toMatchObject({ kid: keys.kid, alg, use: "sig" });
-    expect(entry.kty).toBe(alg === "RS256" ? "RSA" : "EC");
+    expect(entry.kty).toBe({ RS256: "RSA", ES256: "EC", EdDSA: "OKP" }[alg]);
     expect(jwkThumbprint(entry)).toBe(keys.kid);
   });
 
@@ -109,6 +110,15 @@ describe("fingerprint", () => {
   });
 });
 
+describe("an Ed25519 thumbprint", () => {
+  it("takes crv, kty and x, in that order (RFC 7638 §3.2)", () => {
+    const keys = generatePluginKeys({ alg: "EdDSA" });
+    const [entry] = keys.jwks.keys;
+    const members = JSON.stringify({ crv: "Ed25519", kty: "OKP", x: entry.x });
+    expect(keys.kid).toBe(createHash("sha256").update(members).digest("base64url"));
+  });
+});
+
 describe("algorithm", () => {
   it("defaults to RS256", () => {
     expect(generatePluginKeys().alg).toBe("RS256");
@@ -117,8 +127,10 @@ describe("algorithm", () => {
   it("follows the key's type", () => {
     const rsa = loadPrivateKey(generatePluginKeys({ alg: "RS256" }).privateKeyPem, "a");
     const ec = loadPrivateKey(generatePluginKeys({ alg: "ES256" }).privateKeyPem, "b");
+    const ed = loadPrivateKey(generatePluginKeys({ alg: "EdDSA" }).privateKeyPem, "c");
     expect(algorithmOf(rsa.key)).toBe("RS256");
     expect(algorithmOf(ec.key)).toBe("ES256");
+    expect(algorithmOf(ed.key)).toBe("EdDSA");
   });
 
   it("refuses an unsupported algorithm", () => {

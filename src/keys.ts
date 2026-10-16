@@ -6,8 +6,12 @@
  * registers the matching public keys — a JWKS — against your plug-in's public id,
  * and the private key never leaves your plug-in.
  *
- * Two algorithms are supported, and the deployment picks the one to check by
- * the registered key's type: `RS256` for an RSA key, `ES256` for a P-256 key.
+ * Three algorithms are supported, and the deployment picks the one to check by
+ * the registered key's type: `EdDSA` for an Ed25519 key, `ES256` for a P-256
+ * key, `RS256` for an RSA key. Ed25519 is the strongest of them: its
+ * signatures are deterministic, so there is no per-signature nonce whose reuse
+ * or bias would give the key away, as there is with ES256. It needs an
+ * Initiative release that verifies EdDSA.
  *
  * Every key carries a `kid`. Each JWT names the `kid` it was signed with, so
  * rotating is: generate a new key, have the operator register a JWKS holding
@@ -24,17 +28,17 @@ import {
 } from "node:crypto";
 
 /** The algorithms a plug-in key may use. */
-export type PluginKeyAlgorithm = "RS256" | "ES256";
+export type PluginKeyAlgorithm = "RS256" | "ES256" | "EdDSA";
 
 /** One public key, as a JWK. */
 export interface PublicJwk {
-  kty: "RSA" | "EC";
+  kty: "RSA" | "EC" | "OKP";
   kid: string;
   alg: PluginKeyAlgorithm;
   use: "sig";
   n?: string;
   e?: string;
-  crv?: "P-256";
+  crv?: "P-256" | "Ed25519";
   x?: string;
   y?: string;
 }
@@ -76,7 +80,9 @@ export function generatePluginKeys(
       ? generateKeyPairSync("rsa", { modulusLength: 2048 })
       : alg === "ES256"
         ? generateKeyPairSync("ec", { namedCurve: "P-256" })
-        : unsupported(alg);
+        : alg === "EdDSA"
+          ? generateKeyPairSync("ed25519")
+          : unsupported(alg);
   const kid = options.kid ?? thumbprint(privateKey);
   return {
     privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
@@ -90,8 +96,8 @@ export function generatePluginKeys(
  * Load a PEM private key for signing, under the `kid` it was registered with,
  * or its RFC 7638 thumbprint when none is given.
  *
- * The algorithm follows from the key: an RSA key signs `RS256`, a P-256 key
- * signs `ES256`, and any other key is refused.
+ * The algorithm follows from the key: an Ed25519 key signs `EdDSA`, a P-256
+ * key `ES256`, an RSA key `RS256`, and any other key is refused.
  */
 export function loadPrivateKey(pem: string, kid?: string): PluginSigningKey {
   const key = createPrivateKey(pem);
@@ -107,26 +113,29 @@ export function publicJwks(signing: PluginSigningKey): Jwks {
   const entry: PublicJwk =
     signing.alg === "RS256"
       ? { kty: "RSA", kid: signing.kid, alg: "RS256", use: "sig", n: jwk.n, e: jwk.e }
-      : {
-          kty: "EC",
-          kid: signing.kid,
-          alg: "ES256",
-          use: "sig",
-          crv: "P-256",
-          x: jwk.x,
-          y: jwk.y,
-        };
+      : signing.alg === "EdDSA"
+        ? { kty: "OKP", kid: signing.kid, alg: "EdDSA", use: "sig", crv: "Ed25519", x: jwk.x }
+        : {
+            kty: "EC",
+            kid: signing.kid,
+            alg: "ES256",
+            use: "sig",
+            crv: "P-256",
+            x: jwk.x,
+            y: jwk.y,
+          };
   return { keys: [entry] };
 }
 
 /** The algorithm a key signs with, from its type. */
 export function algorithmOf(key: KeyObject): PluginKeyAlgorithm {
+  if (key.asymmetricKeyType === "ed25519") return "EdDSA";
   if (key.asymmetricKeyType === "rsa") return "RS256";
   if (key.asymmetricKeyType === "ec" && key.asymmetricKeyDetails?.namedCurve === "prime256v1") {
     return "ES256";
   }
   throw new TypeError(
-    `unsupported key type ${key.asymmetricKeyType ?? "unknown"}: use an RSA or P-256 key`
+    `unsupported key type ${key.asymmetricKeyType ?? "unknown"}: use an Ed25519, P-256 or RSA key`
   );
 }
 
@@ -135,7 +144,7 @@ export function algorithmOf(key: KeyObject): PluginKeyAlgorithm {
  * assertions are plain `JWT`.
  *
  * ES256 signatures are written in the JOSE form (`r || s`, 64 bytes), which is
- * what `ieee-p1363` produces.
+ * what `ieee-p1363` produces. EdDSA signs the input itself, with no digest.
  */
 export function signJwt(
   signing: PluginSigningKey,
@@ -145,9 +154,11 @@ export function signJwt(
   const header = { alg: signing.alg, kid: signing.kid, typ };
   const input = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
   const signature =
-    signing.alg === "ES256"
-      ? cryptoSign("sha256", Buffer.from(input), { key: signing.key, dsaEncoding: "ieee-p1363" })
-      : cryptoSign("sha256", Buffer.from(input), signing.key);
+    signing.alg === "EdDSA"
+      ? cryptoSign(null, Buffer.from(input), signing.key)
+      : signing.alg === "ES256"
+        ? cryptoSign("sha256", Buffer.from(input), { key: signing.key, dsaEncoding: "ieee-p1363" })
+        : cryptoSign("sha256", Buffer.from(input), signing.key);
   return `${input}.${signature.toString("base64url")}`;
 }
 
@@ -164,7 +175,9 @@ export function jwkThumbprint(jwk: PublicJwk): string {
   const members =
     jwk.kty === "RSA"
       ? { e: jwk.e, kty: jwk.kty, n: jwk.n }
-      : { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
+      : jwk.kty === "OKP"
+        ? { crv: jwk.crv, kty: jwk.kty, x: jwk.x }
+        : { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
   return createHash("sha256").update(JSON.stringify(members)).digest("base64url");
 }
 
@@ -173,5 +186,5 @@ function thumbprint(privateKey: KeyObject): string {
 }
 
 function unsupported(alg: string): never {
-  throw new TypeError(`unsupported algorithm ${alg}: use RS256 or ES256`);
+  throw new TypeError(`unsupported algorithm ${alg}: use EdDSA, ES256 or RS256`);
 }
