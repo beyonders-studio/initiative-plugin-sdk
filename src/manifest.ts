@@ -34,6 +34,8 @@ export {
   type Result,
   type ReturnSpec,
   type RevokeCall,
+  type RuntimeDeclaration,
+  type RuntimeFact,
   type ScheduleCall,
   type ScheduleDeclaration,
   type WebhookCall,
