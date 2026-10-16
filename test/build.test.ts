@@ -252,7 +252,7 @@ describe("the registry source", () => {
         roles: [{ id: "owner", login: "tracker_owner", env: "OWNER_DATABASE_URL" }],
         provisionSql: "/app/provision.sql",
       },
-      secrets: [{ id: "session-key", kind: "rsa_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
+      secrets: [{ id: "session-key", kind: "ed25519_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
       metrics: { path: "/metrics", tokenEnv: "METRICS_TOKEN" },
       integrations: { billing: { hmacEnv: "BILLING_HMAC", publicKeyEnv: "BILLING_PUBLIC_KEY_PEM" } },
     },`;
@@ -275,7 +275,7 @@ describe("the registry source", () => {
         roles: [{ id: "owner", login: "tracker_owner", env: "OWNER_DATABASE_URL" }],
         provision_sql: "/app/provision.sql",
       },
-      secrets: [{ id: "session-key", kind: "rsa_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
+      secrets: [{ id: "session-key", kind: "ed25519_private_key_pem", env: "SESSION_PRIVATE_KEY_PEM" }],
       metrics: { path: "/metrics", token_env: "METRICS_TOKEN" },
       integrations: { billing: { hmac_env: "BILLING_HMAC", public_key_env: "BILLING_PUBLIC_KEY_PEM" } },
     });

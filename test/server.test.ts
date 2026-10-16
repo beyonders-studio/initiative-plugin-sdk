@@ -1,7 +1,7 @@
 /**
  * The server: every route Initiative calls, answered from the definition, with
- * Initiative's tokens signed here by a test key standing in for the
- * deployment's.
+ * Initiative's tokens signed here by an Ed25519 test key standing in for the
+ * deployment's platform key.
  */
 
 import { randomUUID } from "node:crypto";
@@ -12,15 +12,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { manifestOf } from "../src/define.js";
-import { generatePluginKeys, jwkThumbprint } from "../src/keys.js";
-import { generatePlatformKey, loadPlatformKey, signPlatformJwt } from "./support/platform-key.js";
+import { generatePluginKeys, jwkThumbprint, loadPrivateKey, signJwt } from "../src/keys.js";
 import { createPlugin, serve, type PluginHandler } from "../src/server.js";
 import { CONTEXT_TOKEN_TYPE, HANDOFF_TOKEN_TYPE } from "../src/tokens.js";
 import { issuesPlugin, trackerPlugin } from "./support/plugin.js";
 
 const BASE = "https://initiative.example.com/api/v1";
-const platform = generatePlatformKey("platform-1");
-const stranger = generatePlatformKey("platform-1");
+const platform = generatePluginKeys({ kid: "platform-1" });
+const stranger = generatePluginKeys({ kid: "platform-1" });
 const pluginKeys = generatePluginKeys({ kid: "plugin-1" });
 const MODULES = { "open-count": "globalThis.render = function () {};" };
 
@@ -30,7 +29,7 @@ function sign(
   typ = CONTEXT_TOKEN_TYPE
 ): string {
   const now = Math.floor(Date.now() / 1000);
-  return signPlatformJwt(loadPlatformKey(pem, "platform-1"), {
+  return signJwt(loadPrivateKey(pem, "platform-1"), {
     jti: randomUUID(),
     iss: "initiative",
     aud: "initiative-plugin:acme.tracker",

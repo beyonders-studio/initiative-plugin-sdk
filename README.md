@@ -420,8 +420,10 @@ speaks `Request` and `Response`. `serve` runs it on `node:http`, on `PORT`
 | `POST /v1/hooks/{name}` | Initiative's hook calls, on a lifecycle token for that hook. |
 | a page's path | The page's handler. |
 
-Every call's token is verified against the deployment's JWKS, which is cached
-and refetched once for a key it does not know. Each kind carries its own `typ`
+Every call's token is an EdDSA JWT, verified against the deployment's JWKS,
+which is cached and refetched once for a key it does not know. Only the set's
+Ed25519 keys are read, and a token signed any other way (RS256, ES256, `none`) is
+refused. Each kind carries its own `typ`
 (`initiative-context+jwt` on endpoint and hook calls, `initiative-handoff+jwt` on
 a page handoff), and each path takes only its own kind. Bodies are capped at 5 MiB. A
 refusal answers `{ "error": code, "detail": sentence }`.
@@ -459,7 +461,7 @@ npx initiative-plugin keygen --out ./secrets
 half. To rotate, publish a JWKS holding both keys, switch the plug-in to the new
 one, then drop the old entry.
 
-Every plug-in key is Ed25519, signing EdDSA. Its signatures are deterministic,
+Every plug-in key is Ed25519, signing EdDSA, as is the deployment's own key. Its signatures are deterministic,
 so there is no per-signature nonce whose reuse or bias would give the key away.
 `loadPrivateKey` refuses any other kind of key. A deployment that runs the
 plug-in from its package mints the key for it.
