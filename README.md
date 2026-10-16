@@ -532,6 +532,12 @@ for (const { installation, active } of await initiative.installations()) {
   `client.connections()`, `client.connectionToken(ref)` for a usable vendor
   token, `client.reportConfigStatus({ state, detail })`, and
   `client.emitEvent({ eventType, payload, initiativeId })`.
+- What the community holds of the plug-in: `client.entitlement()` reads the
+  statement the `entitlement` hook delivers, or null when there is none, and
+  `client.reportUsage({ meter, period, quantity })` reports a meter's total
+  for one `YYYY-MM` period. The total is the whole period's, never an
+  increment, so repeating a report is harmless. Only meters the deployment
+  allows the plug-in are accepted.
 
 The plug-in authenticates with its key (`private_key_jwt`, RFC 7523). Tokens are
 opaque; the client caches each until shortly before it expires, shares one

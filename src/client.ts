@@ -182,6 +182,34 @@ export interface InstallationEvent {
   initiativeId?: number;
 }
 
+/**
+ * What the deployment's entitlement issuer says this community holds of the
+ * plug-in: the statement the `entitlement` hook carries, read on demand.
+ */
+export interface Entitlement {
+  /** Rises with every new statement for the community. */
+  version: number;
+  /** The statement, whole. Its keys are agreed between the plug-in and the issuer. */
+  values: Record<string, unknown>;
+}
+
+export interface UsageReport {
+  /** A meter the deployment allows this plug-in to report. */
+  meter: string;
+  /** The calendar month the usage falls in, `YYYY-MM` in UTC. */
+  period: string;
+  /**
+   * The total for the whole period so far, never an increment. Initiative
+   * keeps the highest total it is sent and refuses a lower one, so a report
+   * repeated or delayed changes nothing.
+   */
+  quantity: number;
+  /** When the total was counted. Defaults to now. */
+  asOf?: Date;
+}
+
+const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export interface ConsentRequest {
   member: string;
   /** The plug-in's own id for what the member is consenting to. Absent: the whole plug-in. */
@@ -662,6 +690,44 @@ export class Client {
       payload: event.payload ?? {},
       ...(event.initiativeId === undefined ? {} : { initiative_id: event.initiativeId }),
     });
+  }
+
+  /**
+   * The current entitlement statement for this community, or null when the
+   * deployment's issuer has made none. The same statement the `entitlement`
+   * hook delivers: read it to catch up after a restart, or when the hook has
+   * not come.
+   */
+  async entitlement(): Promise<Entitlement | null> {
+    let body: unknown;
+    try {
+      body = await this.installationCall("GET", "/entitlement");
+    } catch (error) {
+      if (error instanceof InitiativeApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (!isRecord(body) || typeof body.version !== "number" || !isRecord(body.values)) {
+      throw new InitiativeApiError(200, "entitlement: not a statement");
+    }
+    return { version: body.version, values: body.values };
+  }
+
+  /**
+   * Report a meter's total for one period. Only a meter the deployment allows
+   * this plug-in to report is accepted; any other is refused with 403, which is
+   * every meter on a deployment that bills nothing.
+   */
+  async reportUsage(report: UsageReport): Promise<void> {
+    if (!report.meter) throw new TypeError("meter is required");
+    if (!PERIOD.test(report.period)) throw new TypeError(`period is YYYY-MM, not ${report.period}`);
+    if (!Number.isSafeInteger(report.quantity) || report.quantity < 0) {
+      throw new TypeError("quantity is a whole number, zero or more");
+    }
+    await this.installationCall(
+      "PUT",
+      `/usage/${encodeURIComponent(report.meter)}/${encodeURIComponent(report.period)}`,
+      { quantity: report.quantity, as_of: (report.asOf ?? new Date()).toISOString() }
+    );
   }
 
   /** Ask a member to let the plug-in act for them, on Initiative's own consent screen. */
