@@ -45,6 +45,7 @@ function claims(extra: Record<string, unknown> = {}): Record<string, unknown> {
     iat: NOW,
     exp: NOW + 60,
     community_ref: "gapp_abc",
+    community_status: "active",
     plugin_install_id: 7,
     ...extra,
   };
@@ -84,6 +85,7 @@ describe("verifyContextToken", () => {
     const verified = await verifyContextToken(token, options(fetchImpl));
     expect(verified).toMatchObject({
       community_ref: "gapp_abc",
+      community_status: "active",
       plugin_install_id: 7,
       scope: "endpoint",
       endpoint_id: "plugin.acme.tracker.read",
@@ -209,6 +211,14 @@ describe("verifyContextToken", () => {
     );
   });
 
+  it("refuses a token naming no community status, or one it does not know", async () => {
+    const { fetchImpl } = jwksFetch();
+    for (const community_status of [undefined, "archived"]) {
+      const token = signJwt(signing, contextClaims({ community_status }), CONTEXT_TOKEN_TYPE);
+      expect(await refusal(verifyContextToken(token, options(fetchImpl)))).toContain("unknown community status");
+    }
+  });
+
   it("refuses something that is not a JWT", async () => {
     const { fetchImpl } = jwksFetch();
     expect(await refusal(verifyContextToken("abc", options(fetchImpl)))).toBe("not a JWT");
@@ -252,6 +262,7 @@ describe("verifyHandoffToken", () => {
       surface_id: "panel",
       initiative_id: 3,
       community_ref: "gapp_abc",
+      community_status: "active",
       plugin_install_id: 7,
       jti: "j-1",
     });
@@ -301,6 +312,7 @@ describe("verifyLifecycleToken", () => {
       scope: "lifecycle",
       hook: "after_connect",
       community_ref: "gapp_abc",
+      community_status: "active",
       plugin_install_id: 7,
     });
   });

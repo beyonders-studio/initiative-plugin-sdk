@@ -103,6 +103,22 @@ export function trackerPlugin() {
       webhook: async (call) => {
         record("webhook", call);
       },
+      installed: async (call) => {
+        record("installed", call);
+      },
+      uninstalled: async (call) => {
+        record("uninstalled", call);
+      },
+      erase: async (call) => {
+        record("erase", call);
+        if (call.installation === "gapp_stuck") throw new Error("the database is down");
+      },
+      community_status: async (call) => {
+        record("community_status", call);
+      },
+      entitlement: async (call) => {
+        record("entitlement", call);
+      },
     },
     widgets: {
       "open-count": {

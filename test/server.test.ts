@@ -36,6 +36,7 @@ function sign(
     iat: now,
     exp: now + 60,
     community_ref: "gapp_1",
+    community_status: "active",
     plugin_install_id: 1,
     ...claims,
   }, typ);
@@ -279,6 +280,67 @@ describe("hooks", () => {
     expect((await post("/v1/hooks/before_connect", connected, hookToken("before_connect"))).status).toBe(404);
     const bad = await post("/v1/hooks/after_connect", { connection: "account", actor: "nobody" }, hookToken("after_connect"));
     expect(bad).toEqual({ status: 400, body: { error: "invalid-request", detail: "not an after_connect call" } });
+  });
+});
+
+describe("community hooks", () => {
+  it("tells the plug-in the community installed, left, and came back under the same reference", async () => {
+    for (const hook of ["installed", "uninstalled", "installed"]) {
+      expect((await post(`/v1/hooks/${hook}`, {}, hookToken(hook))).status).toBe(204);
+    }
+    expect(seen.map((entry) => entry.name)).toEqual(["installed", "uninstalled", "installed"]);
+    expect(seen.map((entry) => entry.call.installation)).toEqual(["gapp_1", "gapp_1", "gapp_1"]);
+    expect(seen[0].call).toMatchObject({ community_status: "active" });
+  });
+
+  it("asks for an erase again when the plug-in could not finish it", async () => {
+    expect((await post("/v1/hooks/erase", {}, hookToken("erase"))).status).toBe(204);
+    const stuck = await post("/v1/hooks/erase", {}, hookToken("erase", { community_ref: "gapp_stuck" }));
+    expect(stuck.status).toBe(500);
+    expect(logs).toEqual(["erase failed"]);
+  });
+
+  it("hands on a change of standing, and refuses one it does not know", async () => {
+    const held = await post("/v1/hooks/community_status", { status: "on_hold" }, hookToken("community_status", { community_status: "on_hold" }));
+    expect(held.status).toBe(204);
+    expect(seen[0].call).toMatchObject({ status: "on_hold", community_status: "on_hold" });
+    const unknown = await post("/v1/hooks/community_status", { status: "archived" }, hookToken("community_status"));
+    expect(unknown).toEqual({ status: 400, body: { error: "invalid-request", detail: "not a community_status call" } });
+  });
+
+  it("hands on an entitlement statement whole, with its version", async () => {
+    const statement = { version: 4, values: { monthly_allowance: 30000, packs_purchased: 0 } };
+    expect((await post("/v1/hooks/entitlement", statement, hookToken("entitlement"))).status).toBe(204);
+    expect(seen[0].call).toMatchObject(statement);
+  });
+
+  for (const [what, body] of [
+    ["no version", { values: {} }],
+    ["a version that is not a whole number", { version: 1.5, values: {} }],
+    ["a version below one", { version: 0, values: {} }],
+    ["values that are not an object", { version: 1, values: [1] }],
+  ] as const) {
+    it(`refuses an entitlement with ${what}`, async () => {
+      const answer = await post("/v1/hooks/entitlement", body, hookToken("entitlement"));
+      expect(answer).toEqual({ status: 400, body: { error: "invalid-request", detail: "not an entitlement call" } });
+      expect(seen).toHaveLength(0);
+    });
+  }
+
+  it("answers 404 for a community hook the plug-in does not define, so Initiative stops sending it", async () => {
+    const tracker = trackerPlugin();
+    const { entitlement: _dropped, ...hooks } = tracker.plugin.hooks!;
+    const plugin = { ...tracker.plugin, hooks };
+    handler = createPlugin(plugin, {
+      baseUrl: BASE,
+      key: { privateKey: pluginKeys.privateKeyPem, kid: "plugin-1" },
+      manifest: manifestOf(plugin, MODULES),
+      fetch: outbound,
+      env: {},
+    });
+    const answer = await post("/v1/hooks/entitlement", { version: 1, values: {} }, hookToken("entitlement"));
+    expect(answer.status).toBe(404);
+    expect(tracker.seen).toHaveLength(0);
   });
 });
 

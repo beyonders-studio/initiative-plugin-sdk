@@ -48,6 +48,13 @@ export const CONTEXT_TOKEN_TYPE = "initiative-context+jwt";
 /** `typ` on a page handoff. */
 export const HANDOFF_TOKEN_TYPE = "initiative-handoff+jwt";
 
+/**
+ * Where a community stands, as Initiative states it. Anything but `active`
+ * means the community is paused: hold back work you would do on its behalf.
+ */
+export const COMMUNITY_STATUSES = ["active", "read_only", "suspended", "on_hold", "deleted"] as const;
+export type CommunityStatus = (typeof COMMUNITY_STATUSES)[number];
+
 /** Claims every token from Initiative carries. */
 export interface InitiativeTokenClaims {
   jti: string;
@@ -56,12 +63,19 @@ export interface InitiativeTokenClaims {
   iat: number;
   exp: number;
   /**
-   * The community, by the reference your installation knows it by. Stable for
-   * your installation, so it is what your own rows key on.
+   * The community, by the reference your plug-in knows it by. Stable for your
+   * plug-in in that community, across uninstall and reinstall, until the
+   * community erases your data (the `erase` hook), so it is what your own
+   * rows key on. The same holds for every member reference.
    */
   community_ref: string;
-  /** The installation within that community. */
+  /**
+   * The installation within that community. It changes when the plug-in is
+   * reinstalled, so never key anything on it.
+   */
   plugin_install_id: number;
+  /** Where the community stands now. */
+  community_status: CommunityStatus;
 }
 
 export interface ContextClaims extends InitiativeTokenClaims {
@@ -378,6 +392,9 @@ async function verifyInitiativeToken(
   }
   if (typeof claims.iat === "number" && claims.iat - leeway > seconds) {
     throw new ContextTokenError("token is not valid yet");
+  }
+  if (!COMMUNITY_STATUSES.includes(claims.community_status)) {
+    throw new ContextTokenError(`unknown community status ${String(claims.community_status)}`);
   }
   return claims;
 }

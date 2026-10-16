@@ -23,24 +23,29 @@ import { Readable } from "node:stream";
 
 import type { ActorKind, ItemKind, Manifest } from "./contract.js";
 import {
+  COMMUNITY_HOOKS,
   endpointId,
   manifestOf,
+  type CommunityHook,
   type AnyPlugin,
   type PluginContext,
   type Call,
   type EndpointDeclaration,
   type Handoff,
+  type Hooks,
   type ParamValue,
   type PageDeclaration,
 } from "./define.js";
 import { Initiative } from "./client.js";
 import { generatePluginKeys, jwkThumbprint, loadPrivateKey, publicJwks, type PluginSigningKey } from "./keys.js";
 import {
+  COMMUNITY_STATUSES,
   ContextTokenError,
   JwksCache,
   verifyContextToken,
   verifyHandoffToken,
   verifyLifecycleToken,
+  type CommunityStatus,
   type VerifyOptions,
 } from "./tokens.js";
 import { pluginDocument, MANIFEST_PATH } from "./validate.js";
@@ -157,9 +162,13 @@ export function createPlugin(
   const pages = Object.entries(plugin.pages ?? {}).filter(([, page]) => page.handler);
   const spent = new Map<string, number>();
 
-  const base = (installation: string, narrowing: { initiative?: number } = {}): Call => ({
-    installation,
-    client: initiative.asInstallation(installation, narrowing),
+  const base = (
+    claims: { community_ref: string; community_status: CommunityStatus },
+    narrowing: { initiative?: number } = {}
+  ): Call => ({
+    installation: claims.community_ref,
+    community_status: claims.community_status,
+    client: initiative.asInstallation(claims.community_ref, narrowing),
     context,
   });
 
@@ -202,6 +211,7 @@ export function createPlugin(
           endpoint: id,
           params: params as Record<string, ParamValue>,
           installation: claims.community_ref,
+          community_status: claims.community_status,
           actor: member === undefined ? { kind: "installation" } : { kind: "member", member },
           caller: claims.act?.sub ?? null,
           initiative: initiativeId ?? null,
@@ -224,16 +234,21 @@ export function createPlugin(
     const known =
       name === "schedule"
         ? Object.keys(plugin.schedules ?? {}).length > 0
-        : (name === "after_connect" || name === "revoke" || name === "webhook") && plugin.hooks?.[name] !== undefined;
+        : isHookName(name) && plugin.hooks?.[name] !== undefined;
     if (!known) return refuse(404, "not-found", "no such hook");
     const claims = await verified(request, (token) => verifyLifecycleToken(token, { ...verify, hook: name }));
     if (claims instanceof Response) return claims;
     const raw = await jsonBody(request);
     if (!isRecord(raw)) return refuse(400, "invalid-request", "expected a json object");
+    const call = base(claims);
+    const hooks = plugin.hooks ?? {};
+
+    if (isCommunityHook(name)) {
+      const done = await communityHook(name, raw, call);
+      return done instanceof Response ? done : empty(204);
+    }
     const subject = name === "schedule" ? "schedule" : "connection";
     if (typeof raw[subject] !== "string" || !raw[subject]) return refuse(400, "invalid-request", `${subject} is required`);
-    const call = base(claims.community_ref);
-    const hooks = plugin.hooks ?? {};
 
     if (name === "schedule") {
       const schedule = plugin.schedules?.[raw.schedule as string];
@@ -269,6 +284,26 @@ export function createPlugin(
     return done instanceof Response ? done : empty(204);
   }
 
+  /** A hook about the community's install: its body checked, then its handler run. */
+  async function communityHook(name: CommunityHook, raw: Record<string, unknown>, call: Call): Promise<Response | void> {
+    const hooks = plugin.hooks ?? {};
+    if (name === "community_status") {
+      const status = raw.status;
+      if (!COMMUNITY_STATUSES.includes(status as CommunityStatus)) {
+        return refuse(400, "invalid-request", "not a community_status call");
+      }
+      return answered(() => hooks.community_status!({ ...call, status: status as CommunityStatus }), "community_status");
+    }
+    if (name === "entitlement") {
+      const { version, values } = raw;
+      if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 || !isRecord(values)) {
+        return refuse(400, "invalid-request", "not an entitlement call");
+      }
+      return answered(() => hooks.entitlement!({ ...call, version, values }), `entitlement v${version}`);
+    }
+    return answered(() => hooks[name]!(call), name);
+  }
+
   async function page(request: Request, id: string, declaration: PageDeclaration): Promise<Response> {
     let handoff: Handoff | null = null;
     if (request.headers.has("authorization")) {
@@ -280,7 +315,7 @@ export function createPlugin(
       if (spent.has(claims.jti)) return refuse(401, "unauthorized", "this handoff token was already used");
       spent.set(claims.jti, claims.exp);
       handoff = {
-        ...base(claims.community_ref, claims.initiative_id === undefined ? {} : { initiative: claims.initiative_id }),
+        ...base(claims, claims.initiative_id === undefined ? {} : { initiative: claims.initiative_id }),
         page: id,
         viewer: claims.sub,
         admin: claims.community_admin === true,
@@ -481,4 +516,13 @@ function empty(status: number): Response {
 
 function refuse(status: number, code: string, detail?: string): Response {
   return json(status, detail === undefined ? { error: code } : { error: code, detail });
+}
+
+/** A hook the plug-in may define, other than a schedule. */
+function isHookName(name: string): name is keyof Hooks & string {
+  return name === "after_connect" || name === "revoke" || name === "webhook" || isCommunityHook(name);
+}
+
+function isCommunityHook(name: string): name is CommunityHook {
+  return (COMMUNITY_HOOKS as readonly string[]).includes(name);
 }

@@ -21,6 +21,7 @@
  * action) it uses the key.
  */
 
+import type { CommunityStatus } from "./tokens.js";
 import type {
   Action,
   ActorKind,
@@ -107,8 +108,13 @@ export interface ItemRef {
 
 /** What every handler is handed. */
 export interface Call {
-  /** The installation: the community, by the reference this plug-in's install knows it by. */
+  /**
+   * The community, by the reference this plug-in knows it by. It survives
+   * uninstall and reinstall, so it is what your rows key on.
+   */
   installation: string;
+  /** Where the community stands. Anything but `active` means hold back. */
+  community_status: CommunityStatus;
   /** Initiative, acting as whoever the call is for. */
   client: Client;
   context: PluginContext;
@@ -231,11 +237,56 @@ export interface ScheduleCall extends Call {
   since: string | null;
 }
 
-/** The hooks Initiative calls while it runs connections and receives the vendor's webhooks. */
+/** What `community_status` is sent, whenever the community's standing changes. */
+export interface CommunityStatusCall extends Call {
+  /** The standing it changed to. The same value `community_status` now carries. */
+  status: CommunityStatus;
+}
+
+/**
+ * What `entitlement` is sent: the deployment's entitlement issuer's statement
+ * of what this community holds of the plug-in. Absent an issuer, it is never
+ * sent.
+ */
+export interface EntitlementCall extends Call {
+  /**
+   * Rises with every new statement for this community. Keep the highest you
+   * have seen and ignore a lower one: statements may arrive more than once and
+   * out of order.
+   */
+  version: number;
+  /**
+   * The statement itself, replacing the last one whole. Its keys are agreed
+   * between your plug-in and the issuer; Initiative carries them unread.
+   */
+  values: Record<string, unknown>;
+}
+
+/** The names of the hooks about a community's install, rather than a connection. */
+export const COMMUNITY_HOOKS = ["installed", "uninstalled", "erase", "community_status", "entitlement"] as const;
+export type CommunityHook = (typeof COMMUNITY_HOOKS)[number];
+
+/**
+ * The hooks Initiative calls while it runs connections and receives the
+ * vendor's webhooks, and as a community installs, leaves, erases, changes
+ * standing or changes what it holds of the plug-in.
+ */
 export interface Hooks {
   after_connect?: (call: AfterConnectCall) => Promise<AfterConnectAnswer>;
   revoke?: (call: RevokeCall) => Promise<void>;
   webhook?: (call: WebhookCall) => Promise<void>;
+  /** The community installed the plug-in, or installed it again under the same references. */
+  installed?: (call: Call) => Promise<void>;
+  /** The community uninstalled the plug-in. Its references stand: it may come back. */
+  uninstalled?: (call: Call) => Promise<void>;
+  /**
+   * Delete everything you hold about the community. Once this answers,
+   * Initiative forgets the community's references for your plug-in, and a
+   * later install starts afresh. Throwing has it asked again.
+   */
+  erase?: (call: Call) => Promise<void>;
+  community_status?: (call: CommunityStatusCall) => Promise<void>;
+  entitlement?: (call: EntitlementCall) => Promise<void>;
 }
 
 export interface ScheduleDeclaration {
@@ -352,7 +403,6 @@ export interface ListingDeclaration {
   image?: string;
   /** The most the plug-in may ever be granted. Absent: its `scopes`. */
   scopeCeiling?: Array<Scope | PluginScope>;
-  referenceSectors?: string[];
   /**
    * The Docker Compose service an operator copies to run the image beside
    * Initiative. `service` is the fragment, YAML text of at most 4096

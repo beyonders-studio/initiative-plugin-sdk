@@ -48,8 +48,7 @@ export function listingFile(plugin: ListedPlugin, manifest: Manifest, root: stri
   const listing = plugin.listing;
   if (!listing) throw new Error("pack needs the plug-in's listing: declare `listing` in its definition");
   const avatar = KEPT_PICTURES.test(listing.avatar) ? readFileSync(resolve(root, listing.avatar)) : null;
-  // A deployment honours reference sectors only from a registry.
-  const { reference_sectors: _sectors, ...registration } = registrationOf(plugin);
+  const registration = registrationOf(plugin);
   return {
     avatar,
     listing: {
