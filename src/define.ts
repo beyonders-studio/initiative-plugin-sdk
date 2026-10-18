@@ -381,13 +381,14 @@ export interface WidgetDeclaration<E> extends Omit<Widget, "id" | "module_source
 }
 
 /**
- * Something a reader runs on one item. `endpoint` names a write endpoint by its
- * key, and `params` the endpoint's params Initiative asks the reader for; a
- * declarative plug-in's action names an endpoint, a `write`, or both.
+ * Something a reader runs on one item. `endpoint` names an endpoint by its key,
+ * and `params` the endpoint's params Initiative asks the reader for. A
+ * container's action names a write; a declarative plug-in's names a read or a
+ * write, a `write`, or both.
  */
 export type ActionDeclaration<E> = Omit<Action, "id" | "endpoint" | "params" | "write"> &
   (
-    | { endpoint: WriteName<E>; params?: Action["params"]; write?: Expression }
+    | { endpoint: WriteName<E> | ReadName<E>; params?: Action["params"]; write?: Expression }
     | { endpoint?: never; params?: never; write: Expression }
   );
 

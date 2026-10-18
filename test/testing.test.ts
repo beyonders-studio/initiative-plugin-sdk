@@ -296,7 +296,7 @@ describe("runAction", () => {
   });
 
   it("writes from the values it holds alone, and nothing when its write answers nothing", async () => {
-    expect(await runAction(plugin, "unlink", { item: task, held: { "issue.number": 12 }, now, responses: [] })).toEqual({
+    expect(await runAction(plugin, "unlink", { item: task, held: { "issue.number": 12 }, now })).toEqual({
       requests: [],
       change: { set: { "issue.number": null, "issue.link": null, "issue.state": null } },
     });

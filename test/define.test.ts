@@ -292,13 +292,13 @@ describe("the definition's types", () => {
     definePlugin({ ...name, endpoints: { read, write }, schedules: { s: { every: "1h", endpoint: "write", write: "[]" } } });
   });
 
-  it("refuse an action naming an endpoint that is not a declared write, neither an endpoint nor a write, or params with no endpoint", () => {
+  it("take an action naming a declared read or write, and refuse neither an endpoint nor a write, or params with no endpoint", () => {
     const read = defineEndpoint({ direction: "read", handler: async () => ({ result: {} }) });
     const write = defineEndpoint({ direction: "write", handler: async () => ({ result: {} }) });
     const name = { publicId: "acme.x", uid: "K7M2QX8N4TVB9E", name: "X" };
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, endpoint: "write", on: ["task"] } } });
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, write: '{"set": {}}', on: ["task"] } } });
-    // @ts-expect-error a read changes nothing
+    // A declarative plug-in's action may read what its write keeps; the validator holds a container's to a write.
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, endpoint: "read", on: ["task"] } } });
     // @ts-expect-error an action that calls nothing and writes nothing does nothing
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, on: ["task"] } } });

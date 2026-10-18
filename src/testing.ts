@@ -474,8 +474,10 @@ export async function runEndpoint(
 export async function runAction(
   plugin: AnyPlugin,
   name: string,
-  call: Recorded &
+  call: Omit<Recorded, "responses"> &
     InstallSettings & {
+      /** The vendor's answers to the endpoint's calls; none when the action names no endpoint. */
+      responses?: RecordedResponse[];
       item: { kind: ItemKind; id: number; title: string };
       held?: Record<string, unknown>;
       /** What the reader answered, for the params the action asks for. */
@@ -494,7 +496,7 @@ export async function runAction(
     throw new TypeError(`'${name}' is offered on no list's elements`);
   }
   const endpoint = action.endpoint === undefined ? undefined : declarative(plugin, action.endpoint);
-  const context = new Context(plugin.hosts ?? [], call, endpoint?.errors ?? []);
+  const context = new Context(plugin.hosts ?? [], { ...call, responses: call.responses ?? [] }, endpoint?.errors ?? []);
   const subject = { item: call.item, ...(call.element === undefined ? {} : { element: call.element }) };
   return context.run<{ result?: Record<string, unknown>; change?: Change }>(async () => {
     const sent = { params: call.params, connections: call.connections, subject };
