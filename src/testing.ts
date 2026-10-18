@@ -357,7 +357,7 @@ function fitsChange(plugin: AnyPlugin, answer: unknown, name: "change" | "target
   if (twice !== undefined) throw new Error(`${where} changes '${twice}' twice: a change sets, upserts or removes a key`);
   const list = (key: string) => plugin.fields?.[key]?.list === true;
   for (const key of [...Object.keys(upsert), ...Object.keys(remove)]) {
-    if (plugin.fields?.[key] && !list(key)) throw new Error(`${where} changes elements of '${key}', which is not a list field`);
+    if (!list(key)) throw new Error(`${where} changes elements of '${key}', which is not a list field`);
   }
   const values = Object.entries(upsert).flatMap(([key, elements]) => elements.map((element): [string, unknown] => [key, element]));
   const element = definitionValidator("listElement");

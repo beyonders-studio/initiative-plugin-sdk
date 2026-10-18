@@ -259,6 +259,9 @@ describe("runWebhook", () => {
     await expect(changing('"upsert": {"issue.state": [{"ref": "12", "value": "open"}]}')).rejects.toThrow(
       "write/0 changes elements of 'issue.state', which is not a list field"
     );
+    await expect(changing('"remove": {"issue.undeclared": ["12"]}')).rejects.toThrow(
+      "write/0 changes elements of 'issue.undeclared', which is not a list field"
+    );
     await expect(changing('"set": {"issues.linked": {"ref": "12"}}')).rejects.toThrow(
       `write/0 sets 'issues.linked', a list field, to {"ref":"12"}, which is not a list of elements`
     );
