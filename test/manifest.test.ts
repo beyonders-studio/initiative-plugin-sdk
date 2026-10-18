@@ -924,6 +924,23 @@ describe("the scopes a plug-in asks for", () => {
       expect(problems[0].where, scope).toBe("/service/scopes/0");
     }
   });
+
+  it("takes a declarative plug-in's read scopes at the top level, and a container's only in its service block", () => {
+    const declarative = manifestOf(issuesPlugin());
+    declarative.scopes = ["projects:read", "members:read", "projects:write", "initiatives:moderate", "community:admin", "plugins:acme.github"];
+    expect(messages(validateManifest(declarative, { publicId: "acme.issues" }))).toBe(
+      [2, 3, 4, 5]
+        .map(
+          (index) =>
+            `/scopes/${index}: a declarative plug-in asks only for read scopes: ` +
+            "it keeps its own values on items it can read, and does not call Initiative"
+        )
+        .join("\n")
+    );
+    expect(messages(validateManifest({ ...base(), scopes: ["projects:read"] }))).toBe(
+      "/scopes: a container plug-in declares its scopes in its service block"
+    );
+  });
 });
 
 describe("an admin-only page", () => {
@@ -1279,6 +1296,33 @@ describe("schedules", () => {
     twice.schedules![1].id = "s-0";
     expect(messages(validateManifest(twice))).toContain("'s-0' is declared twice");
   });
+
+  it("keeps a container's schedule to its hook", () => {
+    const manifest = scheduled("15m");
+    Object.assign(manifest.schedules![0], { endpoint: "plugin.acme.tracker.sync", params: "{}", write: "[]" });
+    expect(messages(validateManifest(manifest))).toBe(
+      ["endpoint", "params", "write"].map((key) => `/schedules/0/${key}: a container plug-in's schedule calls its schedule hook`).join("\n")
+    );
+  });
+
+  it("holds a declarative plug-in's schedule to a read it makes as the installation, under an id no connection has", () => {
+    const manifest = manifestOf(issuesPlugin());
+    const [schedule] = manifest.schedules!;
+    const problems = () => messages(validateManifest(manifest, { publicId: "acme.issues" }));
+    schedule.id = "workspace";
+    schedule.endpoint = "plugin.acme.issues.search";
+    expect(problems()).toBe(
+      [
+        "/schedules/0/id: 'workspace' is also a connection's id, and Initiative keys connection health checks by connection id",
+        "/schedules/0/endpoint: 'plugin.acme.issues.search' does not take the installation as its actor, and no person is present when a schedule runs",
+      ].join("\n")
+    );
+    schedule.id = "sync";
+    schedule.endpoint = "plugin.acme.issues.label";
+    expect(problems()).toBe("/schedules/0/endpoint: names 'plugin.acme.issues.label', which is a write endpoint");
+    schedule.endpoint = "plugin.acme.issues.gone";
+    expect(problems()).toBe("/schedules/0/endpoint: names 'plugin.acme.issues.gone', which this manifest does not declare");
+  });
 });
 
 describe("fields, parts and actions", () => {
@@ -1329,6 +1373,20 @@ describe("fields, parts and actions", () => {
         "/fields/0/requires: requires names unknown connection 'nope'",
         "/actions/1/endpoint: names 'plugin.acme.tracker.links', which is a read endpoint",
         "/actions/2/endpoint: names 'plugin.acme.tracker.gone', which this manifest does not declare",
+      ].join("\n")
+    );
+  });
+
+  it("keeps a container's action to the write endpoint its handler answers, and takes admin_only", () => {
+    const manifest = viewed();
+    manifest.actions![0].admin_only = true;
+    expect(problems(manifest)).toBe("");
+    delete manifest.actions![0].endpoint;
+    manifest.actions![0].write = '{"set": {"demo.opened": 1}}';
+    expect(problems(manifest)).toBe(
+      [
+        "/actions/0: a container plug-in's action names the write endpoint its handler answers",
+        "/actions/0/write: a container plug-in's action is answered by its handler",
       ].join("\n")
     );
   });
@@ -1397,9 +1455,15 @@ describe("declarative plug-ins", () => {
     const manifest = declarative();
     manifest.endpoints![0].request!.query!.state = "$lowercase(params.state";
     manifest.webhooks!.events![0].when = "payload.(";
+    manifest.webhooks!.events![1].write = "[";
+    manifest.actions![0].write = '{"set": ';
+    manifest.schedules![0].params = '{"since": since';
     const text = problems(manifest);
     expect(text).toContain("/endpoints/0/request/query/state: does not parse:");
     expect(text).toMatch(/\/webhooks\/events\/0\/when: does not parse: .* \(at character \d+\)/);
+    for (const where of ["/webhooks/events/1/write", "/actions/0/write", "/schedules/0/params"]) {
+      expect(text).toContain(`${where}: does not parse:`);
+    }
   });
 
   it("refuses one that is also a container", () => {
@@ -1410,27 +1474,47 @@ describe("declarative plug-ins", () => {
     expect(text).toContain("/connections/0/flow/after_connect: a container plug-in sets after_connect true");
     expect(text).toContain("/connections/0/health: health is a declarative plug-in's");
     expect(text).toContain("/webhooks/events: a container plug-in's webhook hook receives each delivery");
+    expect(text).toContain("/scopes: a container plug-in declares its scopes in its service block");
+    expect(text).toContain("/schedules/0/endpoint: a container plug-in's schedule calls its schedule hook");
+    expect(text).toContain("/actions/0/write: a container plug-in's action is answered by its handler");
+    expect(text).toContain("/actions/1: a container plug-in's action names the write endpoint its handler answers");
   });
 
-  it("refuses a container's parts in a declarative plug-in", () => {
+  it("refuses a container's terms in a declarative plug-in, and holds its schedules and actions to its own", () => {
     const manifest = declarative();
     delete manifest.hosts;
     delete manifest.endpoints![0].request;
     manifest.connections![0].flow!.after_connect = true;
     manifest.connections![1].flow!.revoke = "hook";
-    manifest.schedules = [{ id: "sweep", every: "15m" }];
-    manifest.fields = [{ key: "demo.link", name: { en: "Demo" }, kind: "link", on: ["task"] }];
-    manifest.parts = [{ id: "demo", name: { en: "Demo" }, on: ["task"], tree: { type: "field", props: { field: "demo.link" } } }];
-    manifest.actions = [{ id: "label", name: { en: "Label" }, endpoint: "plugin.acme.issues.label", on: ["task"] }];
+    manifest.features.push("pages");
+    manifest.pages = [{ id: "board", path: "/board", name: { en: "Board" } }];
+    delete manifest.schedules![0].write;
+    delete manifest.actions![1].write;
     const text = problems(manifest);
     expect(text).toContain("/hosts: a declarative plug-in (one with no service block) names the hosts it calls");
     expect(text).toContain("/endpoints/0: a declarative endpoint gives exactly one of 'request' and 'steps'");
     expect(text).toContain("/connections/0/flow/after_connect: a declarative plug-in gives after_connect's request and map");
     expect(text).toContain("/connections/1/flow/revoke: a declarative plug-in has no revoke hook");
-    expect(text).toContain("/schedules: a declarative plug-in has no schedules");
-    expect(text).toContain("/fields: a declarative plug-in has no fields");
-    expect(text).toContain("/parts: a declarative plug-in has no parts");
-    expect(text).toContain("/actions: a declarative plug-in has no actions");
+    expect(text).toContain("/pages: a declarative plug-in has no pages: a page is served by a container");
+    expect(text).toContain(
+      "/schedules/0: a declarative plug-in's schedule names the read it makes and the write it makes from the answer"
+    );
+    expect(text).toContain("/actions/1: a declarative plug-in's action names an endpoint, a write, or both");
+  });
+
+  it("holds an event row to an emission with its map, a write, or both", () => {
+    const manifest = declarative();
+    const [opened, closed] = manifest.webhooks!.events!;
+    delete opened.map;
+    closed.map = '{"number": payload.issue.number}';
+    manifest.webhooks!.events!.push({ when: 'headers."x-event" = "ping"' });
+    expect(problems(manifest)).toBe(
+      [
+        "/webhooks/events/0: an event row gives both 'emit' and the 'map' of its payload",
+        "/webhooks/events/1: an event row gives both 'emit' and the 'map' of its payload",
+        "/webhooks/events/2: an event row emits, writes, or both",
+      ].join("\n")
+    );
   });
 
   it("checks what requests and steps name", () => {

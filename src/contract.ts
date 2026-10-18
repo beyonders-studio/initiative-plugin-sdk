@@ -128,6 +128,7 @@ export const CAPS = {
   metadataBytesPerObject: 65536,
   installMetadataKeys: 256,
   installMetadataBytes: 1048576,
+  writeTargets: 100,
   partsPlacedPerItem: 3,
   bundledDashboards: 8,
   dashboardWidgets: 50,
@@ -222,7 +223,7 @@ export const FIELDS = {
   webhooks: ["verify", "dedup", "route", "events", "status"],
   webhookVerify: ["scheme", "header", "prefix", "encoding", "secret"],
   webhookRoute: ["path", "header", "connection", "field"],
-  schedule: ["id", "every"],
+  schedule: ["id", "every", "endpoint", "params", "write"],
   endpoint: ["id", "label", "description", "returns", "group", "needs_subject", "direction", "params", "actors", "admin_only", "public", "requires", "cache_ttl_seconds", "identity", "unavailable", "request", "steps", "map", "errors"],
   widget: ["id", "meta", "module_source", "endpoints", "sample_data", "requires"],
   page: ["id", "path", "name", "scopes", "admin_only", "capabilities", "requires"],
@@ -234,7 +235,9 @@ export const FIELDS = {
   textNode: ["type", "props"],
   buttonNode: ["type", "props"],
   part: ["id", "name", "on", "tree", "description", "requires"],
-  action: ["id", "name", "endpoint", "on", "confirm", "menu", "requires"],
+  action: ["id", "name", "endpoint", "write", "on", "confirm", "menu", "admin_only", "requires"],
+  change: ["set"],
+  targetedChange: ["target", "set"],
   bundledDashboard: ["uid", "public_id", "name", "description", "layout", "widgets"],
   bundledDashboardWidget: ["id", "type", "title", "grid", "binding"],
   endpointIdentity: ["kind", "key"],
@@ -249,9 +252,9 @@ export const FIELDS = {
   afterConnect: ["request", "steps", "map", "refuse_when", "code"],
   connectionHealth: ["request", "every", "states"],
   healthState: ["status", "when", "state"],
-  webhookEvent: ["when", "emit", "map"],
+  webhookEvent: ["when", "emit", "map", "write"],
   webhookStatus: ["when", "connection", "state"],
-  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "hosts", "auth", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "dashboards", "fields", "parts", "actions"],
+  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "dashboards", "fields", "parts", "actions"],
 } as const;
 
 export type Identifier = string;
@@ -648,9 +651,10 @@ export interface Webhooks {
   dedup: string;
   route: WebhookRoute;
   /**
-   * Declarative plug-ins: how a delivery becomes one of this plug-in's events.
-   * The first row whose 'when' holds emits; a delivery no row matches is
-   * dropped.
+   * Declarative plug-ins: what a delivery does: emit one of this plug-in's
+   * events, change the plug-in's values, or both. The first row whose 'when'
+   * holds applies, its 'emit' and its 'write' both; a delivery no row matches
+   * is dropped.
    */
   events?: WebhookEvent[];
   /**
@@ -712,12 +716,18 @@ export interface WebhookRoute {
 }
 
 /**
- * An interval at which Initiative calls the plug-in's schedule hook, once for
- * each community that installed it, with when the call last succeeded there.
+ * Something Initiative runs on an interval, once for each community that
+ * installed the plug-in, with when it last succeeded there as 'since'. A
+ * container plug-in's schedule calls its schedule hook, and names nothing more.
+ * A declarative plug-in's makes one of its read endpoints' calls as the
+ * installation and changes the plug-in's values from the answer: it names the
+ * 'endpoint' and the 'write', and 'params' when the endpoint takes any.
  */
 export interface Schedule {
   /**
-   * Unique within the manifest. The hook is told which schedule is due by it.
+   * Unique within the manifest. A container's hook is told which schedule is
+   * due by it. A declarative plug-in's differs from every connection's id:
+   * Initiative keys connection health checks by connection id.
    */
   id: Identifier;
   /**
@@ -725,6 +735,25 @@ export interface Schedule {
    * minutes and at most 1440 minutes.
    */
   every: string;
+  /**
+   * Declarative plug-ins: a read endpoint this manifest declares, whose
+   * 'actors' include 'installation': no person is present when a schedule runs.
+   */
+  endpoint?: NamespacedId;
+  /**
+   * Declarative plug-ins: the endpoint's params, as one expression answering an
+   * object. It reads 'since', when the schedule last succeeded in the community
+   * (ISO 8601), or null the first time; 'now'; and 'connection', the non-secret
+   * fields of the connection the endpoint's first request names. Absent: none.
+   */
+  params?: Expression;
+  /**
+   * Declarative plug-ins: the changes Initiative makes to the plug-in's values
+   * from the endpoint's answer, as the install: a list of at most 100 targeted
+   * changes ('targetedChange'). It reads 'result', the endpoint's mapped
+   * answer, 'since' and 'now'. Answering nothing changes nothing.
+   */
+  write?: Expression;
 }
 
 /**
@@ -908,14 +937,16 @@ export type MetadataKey = string;
 
 /**
  * How one of the plug-in's metadata keys is shown on Initiative's items. The
- * plug-in keeps the value in Initiative, through its installation token;
- * Initiative draws it with its own component for `kind` and computes its plain
- * text itself, so a field filters, sorts and exports with no call to the
- * plug-in. Which views show it is chosen by the community's managers, never by
- * the plug-in. Initiative holds what is kept, and these caps are enforced there
- * rather than here: a value of at most 8192 bytes as JSON, with a string of at
- * most 255 characters to be found by; at most 32 keys and 65536 bytes on one
- * item, and 256 keys and 1048576 bytes on the install.
+ * value is kept in Initiative: a container plug-in writes it with its
+ * installation token, and for a declarative plug-in Initiative writes it from
+ * the plug-in's expressions. Initiative draws it with its own component for
+ * `kind` and computes its plain text itself, so a field filters, sorts and
+ * exports with no call to the plug-in. Which views show it is chosen by the
+ * community's managers, never by the plug-in. Initiative holds what is kept,
+ * and these caps are enforced there rather than here: a value of at most 8192
+ * bytes as JSON, with a string of at most 255 characters to be found by; at
+ * most 32 keys and 65536 bytes on one item, and 256 keys and 1048576 bytes on
+ * the install.
  */
 export interface Field {
   /**
@@ -1083,11 +1114,15 @@ export interface Part {
 
 /**
  * Something a reader runs on one item, from a part's button or the item's own
- * menu. Initiative only connects: it calls the write endpoint as the
- * installation, with the reader as 'viewer' and the item as 'subject' in the
- * call's token, and the endpoint does the work, usually writing the plug-in's
- * metadata. Initiative then answers the reader with the item's metadata as it
- * stands.
+ * menu. For a container plug-in, Initiative only connects: it calls the write
+ * endpoint as the installation, with the reader as 'viewer' and the item as
+ * 'subject' in the call's token, and the endpoint does the work, usually
+ * writing the plug-in's metadata. For a declarative plug-in, Initiative does
+ * the work: it makes the endpoint's call, when the action names one, on the
+ * credential its 'actors' say, its expressions reading the item as 'item'; then
+ * it makes the change 'write' answers, when the action has one, to the
+ * plug-in's values on the item, as the install. Either way Initiative then
+ * answers the reader with the item's metadata as it stands.
  */
 export interface Action {
   /**
@@ -1099,9 +1134,18 @@ export interface Action {
    */
   name: LocalizedText;
   /**
-   * A write endpoint this manifest declares.
+   * A write endpoint this manifest declares. A container plug-in's action names
+   * one; a declarative plug-in's names one, a 'write', or both.
    */
-  endpoint: NamespacedId;
+  endpoint?: NamespacedId;
+  /**
+   * Declarative plug-ins: the change Initiative makes to the plug-in's values
+   * on the action's item, as the install: one change ('change'). It reads
+   * 'item', the item ({kind, id, title}); 'held', this install's values on it,
+   * by key; 'result', the endpoint's mapped answer, absent when the action
+   * names no endpoint; and 'now'. Answering nothing changes nothing.
+   */
+  write?: Expression;
   /**
    * The item kinds it is offered on.
    */
@@ -1114,8 +1158,63 @@ export interface Action {
    * Also offered in the item's own menu.
    */
   menu?: boolean;
+  /**
+   * Only the community's admins run this action, whatever roles a placement
+   * allows. Who else may run it is chosen in the community, per initiative and
+   * per role, not declared here.
+   */
+  admin_only?: boolean;
   requires?: Requires;
 }
+
+/**
+ * A change to the plug-in's values on one item or on its install, as a
+ * declarative plug-in's 'write' answers it: the shape of a container's
+ * client.metadata.set. Initiative makes it as the install, and holds what is
+ * kept to the caps a field's description gives.
+ */
+export interface Change {
+  /**
+   * Values by metadata key, each any JSON value of at most 8192 bytes; a null
+   * removes its key.
+   */
+  set: Record<string, unknown>;
+}
+
+/**
+ * A change and where Initiative makes it. A webhook event's or a schedule's
+ * 'write' answers a list of at most 100, and cannot read what their targets
+ * hold.
+ */
+export interface TargetedChange {
+  target: ChangeTarget;
+  /**
+   * As a change's: values by metadata key, a null removing its key.
+   */
+  set: Record<string, unknown>;
+}
+
+/**
+ * Where a change is made: {kind, id}, one item; {install: true}, the install
+ * itself; or {holding: {key, value}}, every item on which this install holds
+ * 'value' under 'key', as a container's client.metadata.find finds them. A
+ * target the install cannot read is skipped.
+ */
+export type ChangeTarget = {
+  kind: ItemKind;
+  id: number;
+} | {
+  install: true;
+} | {
+  holding: {
+    key: MetadataKey;
+    /**
+     * A value is found by its text: a string as it is, a number or a boolean as
+     * JSON writes it.
+     */
+    value: string;
+  };
+};
 
 export interface BundledDashboard {
   /**
@@ -1193,9 +1292,10 @@ export interface EndpointIdentity {
  * fields of the connection the request names; 'connections', on an endpoint's
  * requests and map, each connection its 'requires' names that the call has, by
  * its id, holding the same fields; 'now', the time of the call in ISO 8601,
- * which $now() and $millis() also answer; and 'steps', each earlier step's
- * answer by its name. On the way back it also holds 'response', the answer
- * being read: {status, headers, body}, with header names in lowercase. Each
+ * which $now() and $millis() also answer; 'steps', each earlier step's answer
+ * by its name; and, on the call an action makes, 'item', the item it runs on:
+ * {kind, id, title}. On the way back it also holds 'response', the answer being
+ * read: {status, headers, body}, with header names in lowercase. Each
  * evaluation is bounded: at most 1000 milliseconds, 500 levels of nesting and
  * an answer of 1048576 bytes as JSON. An expression that fails or passes a
  * bound answers 'unavailable: mapping-failed'.
@@ -1457,9 +1557,11 @@ export interface HealthState {
 }
 
 /**
- * One way a delivery becomes an event. Its expressions read 'headers' (names in
- * lowercase), 'payload' (the parsed body), 'connection' (the routed
- * connection's non-secret fields) and 'now'.
+ * What one kind of delivery does: emit an event, change the plug-in's values,
+ * or both. It gives 'emit', 'write' or both, and 'map' exactly when it gives
+ * 'emit'. Its expressions read 'headers' (names in lowercase), 'payload' (the
+ * parsed body), 'connection' (the routed connection's non-secret fields) and
+ * 'now'.
  */
 export interface WebhookEvent {
   /**
@@ -1469,11 +1571,17 @@ export interface WebhookEvent {
   /**
    * An emit endpoint this manifest declares.
    */
-  emit: NamespacedId;
+  emit?: NamespacedId;
   /**
    * The event's payload: an object of that endpoint's declared returns.
    */
-  map: Expression;
+  map?: Expression;
+  /**
+   * The changes Initiative makes to the plug-in's values, as the install: a
+   * list of at most 100 targeted changes ('targetedChange'). Answering nothing
+   * changes nothing.
+   */
+  write?: Expression;
 }
 
 /**
@@ -1498,23 +1606,25 @@ export interface WebhookStatus {
 /**
  * What a plug-in declares it can do. A plug-in is a container, which names its
  * `service` and answers Initiative's calls, or declarative, which names its
- * `hosts` and no service, and whose endpoints, connection checks and webhook
- * events Initiative runs itself from the requests and JSONata expressions
- * written here; one plug-in is never both. This is the 'definition' field of
- * the document served at /.well-known/initiative-plugin.json, NOT that whole
- * document: a registrar also requires protocol_version, public_id and kind
- * alongside it, and refuses a definition served bare. Generated from the
- * platform's own validator vocabulary. A manifest that satisfies this schema is
- * well-formed, not necessarily acceptable. Cross-references (the endpoint a
- * widget binds, a requires term's connection, an endpoint's service prefix),
- * the direction-specific rules on an endpoint, the features/blocks cross-check
- * in both directions, UTF-8 byte-size caps, the rules tying a connection's flow
+ * `hosts` and no service, and whose endpoints, connection checks, webhook
+ * events, schedules and actions Initiative runs itself from the requests and
+ * JSONata expressions written here, keeping the values they write on items; one
+ * plug-in is never both. This is the 'definition' field of the document served
+ * at /.well-known/initiative-plugin.json, NOT that whole document: a registrar
+ * also requires protocol_version, public_id and kind alongside it, and refuses
+ * a definition served bare. Generated from the platform's own validator
+ * vocabulary. A manifest that satisfies this schema is well-formed, not
+ * necessarily acceptable. Cross-references (the endpoint a widget binds, a
+ * requires term's connection, an endpoint's service prefix), the
+ * direction-specific rules on an endpoint, the features/blocks cross-check in
+ * both directions, UTF-8 byte-size caps, the rules tying a connection's flow
  * and token to its scope and fields, what a webhooks block names, what a vendor
  * setup writes to, whether every expression parses, what a declarative request
- * and its steps name, the bounds and unique ids of schedules, the unique keys
- * and ids of fields, parts and actions, what a part's nodes and an action name,
- * and a part's size and depth are enforced by the platform on publish and are
- * not expressible here.
+ * and its steps name, the bounds, ids and endpoints of schedules, which terms
+ * each kind's schedules, actions and webhook events take, the unique keys and
+ * ids of fields, parts and actions, what a part's nodes and an action name, and
+ * a part's size and depth are enforced by the platform on publish and are not
+ * expressible here.
  */
 export interface Manifest {
   /**
@@ -1581,12 +1691,21 @@ export interface Manifest {
    * Declarative plug-ins only.
    */
   auth?: VendorAuth;
+  /**
+   * Declarative plug-ins: the scopes this plug-in asks a community to grant,
+   * all of them read scopes ('<resource>:read'). A declarative plug-in keeps
+   * its own values on items it can read and does not call Initiative, and
+   * Initiative keeps them only on items these scopes read. A container plug-in
+   * declares its scopes in its service block.
+   */
+  scopes?: Array<Scope | PluginScope>;
   vendor?: Vendor;
   connections?: Connection[];
   webhooks?: Webhooks;
   /**
-   * What Initiative calls the plug-in's schedule hook for, and how often. At
-   * most 8.
+   * What Initiative runs on an interval for each community: a container
+   * plug-in's schedule hook, or a declarative plug-in's read and the values it
+   * writes from the answer. At most 8.
    */
   schedules?: Schedule[];
   endpoints?: Endpoint[];
@@ -1608,21 +1727,21 @@ export interface Manifest {
    */
   dashboards?: BundledDashboard[];
   /**
-   * How the plug-in's metadata is shown on items. A container plug-in's only: a
-   * declarative plug-in holds no installation token, so it keeps no metadata to
-   * show.
+   * How the plug-in's values on items are shown there. Any plug-in may keep
+   * values on items: a container writes them with its installation token, and
+   * for a declarative plug-in Initiative writes them from the plug-in's
+   * expressions.
    */
   fields?: Field[];
   /**
    * Pieces of items' pages and views, built from Initiative's components and
-   * bound to the plug-in's fields and actions. A container plug-in's only, as
-   * fields are.
+   * bound to the plug-in's fields and actions.
    */
   parts?: Part[];
   /**
-   * What a reader may run on an item, each one of the plug-in's write
-   * endpoints. A container plug-in's only: a declarative plug-in has no handler
-   * to do an action's work.
+   * What a reader may run on an item: a container plug-in's write endpoints,
+   * which its handlers answer, or a declarative plug-in's calls and changes to
+   * its values, which Initiative makes.
    */
   actions?: Action[];
 }

@@ -194,12 +194,15 @@ describe("the oldest plug-in API it needs", () => {
 describe("a declarative definition", () => {
   const declarative = manifestOf(issuesPlugin());
 
-  it("writes its hosts and no service block, and names an event's emission by id", () => {
+  it("writes its hosts and scopes and no service block, and names each endpoint it names by id", () => {
     expect(declarative).not.toHaveProperty("service");
-    expect(Object.keys(declarative).slice(0, 5)).toEqual(["plugin_kind", "features", "default_name", "hosts", "vendor"]);
+    expect(Object.keys(declarative).slice(0, 6)).toEqual(["plugin_kind", "features", "default_name", "hosts", "scopes", "vendor"]);
     expect(declarative.hosts).toEqual(["api.tracker.example", "*.tracker.example"]);
-    expect(declarative.webhooks?.events?.[0].emit).toBe("plugin.acme.issues.issue-opened");
+    expect(declarative.scopes).toEqual(["projects:read"]);
+    expect(declarative.webhooks?.events?.map((event) => event.emit)).toEqual(["plugin.acme.issues.issue-opened", undefined]);
     expect(declarative.endpoints?.[1]).toMatchObject({ id: "plugin.acme.issues.label", steps: [{ name: "current" }, { name: "set" }] });
+    expect(declarative.schedules).toMatchObject([{ id: "sync", every: "1h", endpoint: "plugin.acme.issues.updated-issues" }]);
+    expect(declarative.actions?.map((action) => action.endpoint)).toEqual(["plugin.acme.issues.create-issue", undefined]);
   });
 
   it("is a manifest the SDK's own validation passes", () => {
@@ -264,17 +267,32 @@ describe("the definition's types", () => {
     const name = { publicId: "acme.x", uid: "K7M2QX8N4TVB9E", name: "X", hosts: ["x.example"] };
     const webhooks = { verify: issuesPlugin().webhooks!.verify, dedup: "X-Delivery", route: { path: "a", connection: "c", field: "f" } };
     definePlugin({ ...name, endpoints: { emitted, read }, webhooks: { ...webhooks, events: [{ when: "true", emit: "emitted", map: "{}" }] } });
+    definePlugin({ ...name, endpoints: { emitted, read }, webhooks: { ...webhooks, events: [{ when: "true", write: "[]" }] } });
     // @ts-expect-error a read is not emitted
     definePlugin({ ...name, endpoints: { emitted, read }, webhooks: { ...webhooks, events: [{ when: "true", emit: "read", map: "{}" }] } });
+    // @ts-expect-error an emission's payload is mapped
+    definePlugin({ ...name, endpoints: { emitted, read }, webhooks: { ...webhooks, events: [{ when: "true", emit: "emitted" }] } });
   });
 
-  it("refuse an action naming an endpoint that is not a declared write", () => {
+  it("keep a declarative schedule to a read", () => {
+    const read = defineEndpoint({ direction: "read", request: { method: "GET", url: "u", connection: "c" }, map: "{}" });
+    const write = defineEndpoint({ direction: "write", request: { method: "POST", url: "u", connection: "c" }, map: "{}" });
+    const name = { publicId: "acme.x", uid: "K7M2QX8N4TVB9E", name: "X", hosts: ["x.example"] };
+    definePlugin({ ...name, endpoints: { read, write }, schedules: { s: { every: "1h", endpoint: "read", write: "[]" } } });
+    // @ts-expect-error a schedule reads
+    definePlugin({ ...name, endpoints: { read, write }, schedules: { s: { every: "1h", endpoint: "write", write: "[]" } } });
+  });
+
+  it("refuse an action naming an endpoint that is not a declared write, or neither an endpoint nor a write", () => {
     const read = defineEndpoint({ direction: "read", handler: async () => ({ result: {} }) });
     const write = defineEndpoint({ direction: "write", handler: async () => ({ result: {} }) });
     const name = { publicId: "acme.x", uid: "K7M2QX8N4TVB9E", name: "X" };
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, endpoint: "write", on: ["task"] } } });
+    definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, write: '{"set": {}}', on: ["task"] } } });
     // @ts-expect-error a read changes nothing
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, endpoint: "read", on: ["task"] } } });
+    // @ts-expect-error an action that calls nothing and writes nothing does nothing
+    definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, on: ["task"] } } });
   });
 
   it("refuse a widget or a summary naming an endpoint that is not a declared read", () => {

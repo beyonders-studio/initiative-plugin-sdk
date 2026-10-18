@@ -437,6 +437,22 @@ describe("a declarative plug-in", () => {
     expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: [] });
   });
 
+  it("asks for read scopes, which its registration's ceiling holds, and refuses any other", async () => {
+    const scoped = (scopes: string, extra = "") =>
+      declarative('{"total": response.body.count}', extra).replace("hosts:", `scopes: ${scopes},\n  hosts:`);
+    write({ "src/plugin.ts": scoped('["projects:read"]') });
+    expect(await run({ registry: "registry" })).toBe(0);
+    expect(manifest().scopes).toEqual(["projects:read"]);
+    const listing = JSON.parse(readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8"));
+    expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: ["projects:read"] });
+
+    write({ "src/plugin.ts": scoped('["projects:write"]', 'scopeCeiling: ["projects:read", "comments:write"]') });
+    expect(await run()).toBe(1);
+    const text = errors.join("");
+    expect(text).toContain("manifest/scopes/0: a declarative plug-in asks only for read scopes");
+    expect(text).toContain("listing: a declarative plug-in is granted read scopes at most, not comments:write");
+  });
+
   it("refuses an image, and a container plug-in's listing without one", async () => {
     write({ "src/plugin.ts": declarative("{}", `image: "ghcr.io/acme/tracker@sha256:${"a".repeat(64)}"`) });
     expect(await run()).toBe(1);

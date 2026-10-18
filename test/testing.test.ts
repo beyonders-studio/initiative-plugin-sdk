@@ -1,13 +1,13 @@
 /**
- * A declarative plug-in's requests and mappings, run against recorded answers
- * exactly as Initiative will run them: what is sent, what each answer means,
- * and the bounds every expression is evaluated within.
+ * A declarative plug-in's requests, mappings and writes, run against recorded
+ * answers exactly as Initiative will run them: what is sent, what each answer
+ * means, what is written, and the bounds every expression is evaluated within.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CAPS } from "../src/contract.js";
-import { evaluate, runAfterConnect, runEndpoint, runHealth, runWebhook } from "../src/testing.js";
+import { evaluate, runAction, runAfterConnect, runEndpoint, runHealth, runSchedule, runWebhook } from "../src/testing.js";
 import { issuesPlugin } from "./support/plugin.js";
 
 const plugin = issuesPlugin();
@@ -187,17 +187,128 @@ describe("runHealth", () => {
 });
 
 describe("runWebhook", () => {
-  it("emits the first matching event, and sets a connection's state", async () => {
+  const closed = { headers: { "X-Event": "issues" }, payload: { action: "closed", issue: { number: 7 } } };
+
+  it("emits the first matching row's event and makes its writes, and sets a connection's state", async () => {
     expect(
       await runWebhook(plugin, {
         headers: { "X-Event": "issues" },
         payload: { action: "opened", issue: { number: 7, title: "Broken" } },
       })
-    ).toEqual({ event: { emit: "issue-opened", payload: { number: 7, title: "Broken" } } });
+    ).toEqual({
+      event: { emit: "issue-opened", payload: { number: 7, title: "Broken" } },
+      writes: [{ target: { install: true }, set: { "issues.last_opened": 7 } }],
+    });
+    expect(await runWebhook(plugin, closed)).toEqual({
+      writes: [{ target: { holding: { key: "issue.number", value: "7" } }, set: { "issue.state": "closed" } }],
+    });
     expect(await runWebhook(plugin, { headers: { "X-Event": "installation" }, payload: { action: "suspend" } })).toEqual({
       status: { connection: "workspace", state: "suspended" },
     });
     expect(await runWebhook(plugin, { headers: { "X-Event": "push" }, payload: {} })).toEqual({});
+  });
+
+  it("fails on a write that is not a list of targeted changes within the caps", async () => {
+    const writing = (write: string) => {
+      const changed = issuesPlugin();
+      changed.webhooks!.events![1].write = write;
+      return runWebhook(changed, closed);
+    };
+    await expect(writing('{"target": {"install": true}, "set": {}}')).rejects.toThrow("wrap the answer in [ ] to keep a list");
+    await expect(writing('[{"target": {"kind": "task"}, "set": {}}]')).rejects.toThrow(
+      'write/0 answered {"target":{"kind":"task"},"set":{}}, which is not a targeted change: /target must have required property \'id\''
+    );
+    await expect(writing('[{"target": {"install": true}, "set": {"Issue": 1}}]')).rejects.toThrow("/set property name must be valid");
+    await expect(writing(`[{"target": {"install": true}, "set": {"big": $pad("", ${CAPS.metadataValueBytes}, "x")}}]`)).rejects.toThrow(
+      `write/0 sets 'big' to more than ${CAPS.metadataValueBytes} bytes as JSON`
+    );
+    await expect(writing(`[1..${CAPS.writeTargets + 1}].{"target": {"install": true}, "set": {}}`)).rejects.toThrow(
+      `write answered ${CAPS.writeTargets + 1} changes, more than ${CAPS.writeTargets}`
+    );
+  });
+});
+
+describe("runAction", () => {
+  const task = { kind: "task" as const, id: 7, title: "Fix the build" };
+  const created = { status: 201, body: { number: 12, html_url: "https://tracker.example/acme/issues/12" } };
+
+  it("makes its endpoint's call with the item, and the change its write answers from the result", async () => {
+    expect(await runAction(plugin, "create", { item: task, connections: workspace, now, responses: [created] })).toEqual({
+      requests: [
+        {
+          method: "POST",
+          url: "https://api.tracker.example/repos/acme/issues",
+          headers: {},
+          body: { title: "Fix the build", body: "From task 7" },
+          connection: "workspace",
+        },
+      ],
+      result: { number: 12, url: "https://tracker.example/acme/issues/12" },
+      change: {
+        set: { "issue.number": 12, "issue.link": { url: "https://tracker.example/acme/issues/12", text: "#12" }, "issue.state": "open" },
+      },
+    });
+    expect(await runAction(plugin, "create", { item: task, connections: workspace, now, responses: [{ status: 404 }] })).toEqual({
+      requests: [expect.objectContaining({ method: "POST" })],
+      unavailable: "not-found",
+    });
+  });
+
+  it("writes from the values it holds alone, and nothing when its write answers nothing", async () => {
+    expect(await runAction(plugin, "unlink", { item: task, held: { "issue.number": 12 }, now, responses: [] })).toEqual({
+      requests: [],
+      change: { set: { "issue.number": null, "issue.link": null, "issue.state": null } },
+    });
+    expect(await runAction(plugin, "unlink", { item: task, now, responses: [] })).toEqual({ requests: [] });
+  });
+
+  it("fails on a write that is not a change, and on an item it is not offered on", async () => {
+    const changed = issuesPlugin();
+    changed.actions!.unlink.write = '{"issue.number": null}';
+    await expect(runAction(changed, "unlink", { item: task, now, responses: [] })).rejects.toThrow(
+      "write answered {\"issue.number\":null}, which is not a change: / must have required property 'set'"
+    );
+    await expect(runAction(plugin, "unlink", { item: { ...task, kind: "post" }, now, responses: [] })).rejects.toThrow(
+      "'unlink' is not offered on post"
+    );
+  });
+});
+
+describe("runSchedule", () => {
+  it("asks what changed since its last success, and writes each answer to the items holding it", async () => {
+    const run = await runSchedule(plugin, "sync", {
+      since: "2026-10-01T12:00:00.000Z",
+      connections: workspace,
+      now,
+      responses: [{ body: [{ number: 7, state: "closed" }, { number: 9, state: "open" }] }],
+    });
+    expect(run).toEqual({
+      requests: [
+        {
+          method: "GET",
+          url: "https://api.tracker.example/repos/acme/issues?since=2026-10-01T12%3A00%3A00.000Z&state=all",
+          headers: {},
+          connection: "workspace",
+        },
+      ],
+      result: { numbers: [7, 9], states: ["closed", "open"] },
+      writes: [
+        { target: { holding: { key: "issue.number", value: "7" } }, set: { "issue.state": "closed" } },
+        { target: { holding: { key: "issue.number", value: "9" } }, set: { "issue.state": "open" } },
+      ],
+    });
+  });
+
+  it("asks for everything the first time, writes nothing when nothing changed, and nothing on a failure", async () => {
+    expect(await runSchedule(plugin, "sync", { connections: workspace, now, responses: [{ body: [] }] })).toEqual({
+      requests: [expect.objectContaining({ url: "https://api.tracker.example/repos/acme/issues?state=all" })],
+      result: {},
+      writes: [],
+    });
+    expect(await runSchedule(plugin, "sync", { connections: workspace, now, responses: [{ status: 502 }] })).toEqual({
+      requests: [expect.objectContaining({ method: "GET" })],
+      transient: true,
+    });
   });
 });
 

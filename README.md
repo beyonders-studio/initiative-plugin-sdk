@@ -16,7 +16,7 @@ holds its tokens, and builds its manifest.
 | `initiative-plugin-sdk/widget` | What a widget is handed, and the scenes it returns |
 | `initiative-plugin-sdk/parts` | The components a part's tree is built from: `Section`, `Stack`, `Field`, `Value`, `Text`, `Button` |
 | `initiative-plugin-sdk/jsx-runtime` | JSX for a part's tree, with no React |
-| `initiative-plugin-sdk/testing` | A declarative plug-in's requests and maps, run against recorded vendor answers |
+| `initiative-plugin-sdk/testing` | A declarative plug-in's requests, maps and writes, run against recorded vendor answers |
 | `initiative-plugin-sdk/plugin-api.json` | The plug-in API contract: the OpenAPI document of every route a plug-in may call |
 | bin `initiative-plugin` | `init`, `build`, `pack`, `dev`, `validate`, `keygen`, `uid`, `schema` |
 
@@ -336,14 +336,15 @@ What a plug-in adds to the views and pages of Initiative's items: tasks,
 calendar events, queue items, counters, gallery images and posts
 (`ITEM_KINDS`). Initiative draws all of it with its own components, so no
 plug-in code runs in a reader's browser, and the community's managers place
-it; a plug-in never places itself. They are a container plug-in's: a declarative
-plug-in holds no installation token to keep metadata with, and no handler to
-run an action.
+it; a plug-in never places itself. Any plug-in may declare them, container or
+declarative.
 
 **Metadata** is what the plug-in keeps on an item or on its own install: values
 by key (a lowercase letter, then lowercase letters, digits, `_` and `.`), held
-by Initiative and written with the installation token (`client.metadata`,
-below). Initiative enforces its sizes: a value of at most 8192 bytes as JSON,
+by Initiative. A container writes them with its installation token
+(`client.metadata`, below); for a declarative plug-in, Initiative writes them
+from the plug-in's expressions ([Declarative integrations](#declarative-integrations)).
+Initiative enforces its sizes: a value of at most 8192 bytes as JSON,
 32 keys and 64 KiB on one item, and 256 keys and 1 MiB on the install. A
 string of at most 255 characters can be found by.
 
@@ -373,12 +374,14 @@ fields: {
 editor's Add picker shows; `tone` is a badge's tone when its value names none
 (`accent`, `positive`, `negative`, `warning`, `neutral`, `muted`).
 
-**An action** runs one of the plug-in's write endpoints on one item, from a
-part's button, or from the item's own menu with `menu: true`. Initiative calls
-the endpoint as the installation, with `viewer` and `subject` set, and the
-handler does the work, usually writing metadata. Initiative then answers the
-reader with the item's metadata as it stands. With `confirm`, Initiative asks
-first.
+**An action** runs on one item, from a part's button, or from the item's own
+menu with `menu: true`. A container plug-in's action names one of its write
+endpoints: Initiative calls it as the installation, with `viewer` and `subject`
+set, and the handler does the work, usually writing metadata. A declarative
+plug-in's names an endpoint, a `write`, or both, and Initiative does the work
+itself. Either way Initiative then answers the reader with the item's metadata
+as it stands. With `confirm`, Initiative asks first; with `admin_only: true`,
+only the community's admins may run it.
 
 ```ts
 actions: {
@@ -747,7 +750,9 @@ A plug-in that only calls a vendor's API and reshapes the answer needs no
 container. Name the `hosts` it calls and give each endpoint a `request` and a
 `map` in place of a handler: Initiative makes the call with the connection's
 credential, and maps the answer itself. The plug-in has no `service` block, no
-image and nothing to run, and its listing registers it as `declarative`.
+image and nothing to run, and its listing registers it as `declarative`. It
+may still keep values on Initiative's items, which its webhook events,
+schedules and actions write and its fields and parts show.
 
 ```ts
 // src/plugin.ts
@@ -852,21 +857,82 @@ it("lists a repository's open issues", async () => {
   three `steps`, a map to `{values, account_label}`, and `refuse_when` with
   its `code`, which read each step as `steps.<name>`) and a
   `health` check run on an interval. **Webhooks** take `events`, each mapping
-  a delivery to one of the plug-in's emissions, and `status` rows that set a
-  connection's state; a delivery may be routed by a `header` instead of a
-  body `path`.
-- **One plug-in is one kind.** A declarative plug-in has no handlers, hooks,
-  schedules or pages, and asks for no scopes; a container plug-in uses none of
-  these terms. `validateManifest` and `build` refuse a mix.
+  a delivery to one of the plug-in's emissions, changes to its values, or
+  both, and `status` rows that set a connection's state; a delivery may be
+  routed by a `header` instead of a body `path`.
+- **Scopes** are read scopes alone, at the manifest's top level, and
+  `validateManifest` refuses any other: a declarative plug-in keeps its own
+  values on items it can read, and does not call Initiative. Initiative keeps
+  its values only on items those scopes read, such as tasks with
+  `projects:read`.
+- **Values** are written from a `write` expression: Initiative makes the
+  changes it answers, as the install. A **change** is `{"set": {"<key>": <value>}}`, the
+  shape of `client.metadata.set`: a null removes its key, and every value is
+  held to the metadata caps. A **targeted change** adds its `target`:
+  `{"kind": "task", "id": 7}` for one item, `{"install": true}` for the
+  install, or `{"holding": {"key": "<key>", "value": "<text>"}}` for every item
+  on which the install holds that value under that key (a number or a boolean
+  as JSON writes it). A target the install cannot read is skipped, one `write`
+  answers at most 100 targeted changes (`CAPS.writeTargets`), and a `write`
+  answering nothing changes nothing.
+  - An **event** row's `write`, beside its `emit` and `map` or in their place,
+    answers targeted changes from `headers`, `payload`, `connection` and
+    `now`. The first row whose `when` holds applies, its emission and its
+    write both.
+  - An **action** names a write `endpoint`, a `write`, or both. Initiative
+    makes the endpoint's call on the credential its `actors` say, its
+    expressions also reading `item` (`{kind, id, title}`), then the one change
+    `write` answers from `item`, `held` (the install's values on the item),
+    `result` (the endpoint's mapped answer) and `now`.
+  - A **schedule** makes a read as the installation on an interval: `endpoint`
+    names a read endpoint whose `actors` include `installation`, `params`
+    answers its params from `since` (when the schedule last succeeded, or
+    null), `now` and `connection`, and `write` answers targeted changes from
+    `result`, `since` and `now`. Its id is none of the plug-in's connections':
+    Initiative keys connection health checks by connection id.
 
-`runEndpoint`, `runAfterConnect`, `runHealth` and `runWebhook` render each
-request as Initiative sends it, less the credential, answer it from the
-recorded `responses` in order, and return the requests beside the result or
+  ```ts
+  schedules: {
+    sync: {
+      every: "1h",
+      endpoint: "updated-issues", // returns numbers: int list, states: string list
+      params: '{"since": since}',
+      write:
+        '[$map(result.numbers, function($n, $i) { {"target": {"holding": {"key": "issue.number", "value": $string($n)}}, "set": {"issue.state": result.states[$i]}} })]',
+    },
+  },
+  actions: {
+    create: {
+      name: { en: "Create an issue" },
+      endpoint: "create-issue", // returns number: int, url: string
+      on: ["task"],
+      write: '{"set": {"issue.number": result.number, "issue.link": {"url": result.url, "text": "#" & result.number}}}',
+    },
+  },
+  ```
+
+  Wrap a list a `write` answers in `[ ]`: a JSONata path matching one item
+  answers it alone, and a run refuses a lone change where a list belongs.
+- **One plug-in is one kind.** A declarative plug-in is a manifest Initiative
+  runs, with no plug-in code: it has no handlers, hooks or pages. A container
+  plug-in ships code, which Initiative calls, and uses none of the declarative
+  terms. Any plug-in may keep values on items in Initiative: a container
+  writes them with its installation token, and for a declarative plug-in
+  Initiative writes them from the plug-in's expressions. `validateManifest`
+  and `build` refuse a mix.
+
+`runEndpoint`, `runAfterConnect`, `runHealth`, `runAction` and `runSchedule`
+render each request as Initiative sends it, less the credential, answer it from
+the recorded `responses` in order, and return the requests beside the result or
 the code the run answered. `runEndpoint` takes each connection's fields by id
 in `connections`; it has no actor, so it does not refuse a call the way
-Initiative would for who is making it. A run fails when a request has no recorded answer
-left, when an answer is left over, or when the map's answer does not fit the
-declared returns.
+Initiative would for who is making it. `runAction` takes the `item` and what
+the install `held` on it, and answers the endpoint's `result` and the
+`change`; `runSchedule` takes `since`, and answers the endpoint's `result` and
+the `writes`; `runWebhook` answers a delivery's `event`, `writes` and `status`.
+A run fails when a request has no recorded answer left, when an answer is left
+over, when the map's answer does not fit the declared returns, or when a
+`write` answers what is not a change.
 
 ## A private plug-in
 
@@ -1009,6 +1075,10 @@ either the file's version or the client is stale.
 | `initiatives:moderate` | Acting as a moderator in an initiative it is placed in: everything there, within the plug-in's other scopes. Only on a token that asks for it (`level=moderator`) and is narrowed to that initiative. |
 | `community:admin` | Acting with a community admin's standing across the community, within the plug-in's other scopes. Only on a token that asks for it (`level=community_admin`) and is not narrowed to an initiative. |
 | `plugins:<public id>` | Calling that plug-in's public endpoints through Initiative. One per plug-in. |
+
+A container plug-in's `scopes` go in its manifest's `service` block. A
+declarative plug-in asks for read scopes alone, at the manifest's top level: it
+keeps its own values on items those scopes read, and does not call Initiative.
 
 Writing implies reading. Within its scopes a plug-in still sees only what is open
 to the initiative, shared with the plug-in, or created by it — unless a token asks

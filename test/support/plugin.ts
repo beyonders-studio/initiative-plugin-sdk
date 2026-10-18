@@ -246,11 +246,39 @@ export function issuesPlugin() {
     identity: { kind: "issue", key: ["number"] },
   });
 
+  const createIssue = defineEndpoint({
+    direction: "write",
+    actors: ["installation"],
+    returns: { number: "int", url: "string" },
+    request: {
+      method: "POST",
+      url: `${api("/repos/")} & connection.owner & "/issues"`,
+      body: '{"title": item.title, "body": "From task " & item.id}',
+      connection: "workspace",
+    },
+    map: '{"number": response.body.number, "url": response.body.html_url}',
+  });
+
+  const updatedIssues = defineEndpoint({
+    direction: "read",
+    actors: ["installation"],
+    params: { since: { type: "datetime", label: { en: "Since" } } },
+    returns: { numbers: { type: "int", list: true }, states: { type: "string", list: true } },
+    request: {
+      method: "GET",
+      url: `${api("/repos/")} & connection.owner & "/issues"`,
+      query: { since: "params.since", state: '"all"' },
+      connection: "workspace",
+    },
+    map: '{"numbers": response.body.number[], "states": response.body.state[]}',
+  });
+
   return definePlugin({
     publicId: "acme.issues",
     uid: "K7M2QX8N4TVB9F",
     name: "Issues",
     hosts: ["api.tracker.example", "*.tracker.example"],
+    scopes: ["projects:read"],
     vendor: {
       fields: [
         { key: "client_id", type: "string", required: true, label: { en: "Client id" } },
@@ -308,10 +336,65 @@ export function issuesPlugin() {
           when: 'headers."x-event" = "issues" and payload.action = "opened"',
           emit: "issue-opened",
           map: '{"number": payload.issue.number, "title": payload.issue.title}',
+          write: '[{"target": {"install": true}, "set": {"issues.last_opened": payload.issue.number}}]',
+        },
+        {
+          when: 'headers."x-event" = "issues" and payload.action = "closed"',
+          write: '[{"target": {"holding": {"key": "issue.number", "value": $string(payload.issue.number)}}, "set": {"issue.state": "closed"}}]',
         },
       ],
       status: [{ when: 'headers."x-event" = "installation" and payload.action = "suspend"', connection: "workspace", state: "suspended" }],
     },
-    endpoints: { "open-issues": openIssues, label, search, assign, "issue-opened": issueOpened },
+    schedules: {
+      sync: {
+        every: "1h",
+        endpoint: "updated-issues",
+        params: '{"since": since}',
+        write:
+          '[$map(result.numbers, function($n, $i) { {"target": {"holding": {"key": "issue.number", "value": $string($n)}}, "set": {"issue.state": result.states[$i]}} })]',
+      },
+    },
+    endpoints: {
+      "open-issues": openIssues,
+      label,
+      search,
+      assign,
+      "issue-opened": issueOpened,
+      "create-issue": createIssue,
+      "updated-issues": updatedIssues,
+    },
+    fields: {
+      "issue.link": { name: { en: "Issue" }, kind: "link", on: ["task"] },
+      "issue.state": { name: { en: "State" }, kind: "text", on: ["task"] },
+    },
+    parts: {
+      issue: {
+        name: { en: "Issue" },
+        on: ["task"],
+        tree: {
+          type: "section",
+          children: [
+            { type: "field", props: { field: "issue.link" } },
+            { type: "value", props: { field: "issue.state" } },
+            { type: "button", props: { action: "create" } },
+          ],
+        },
+      },
+    },
+    actions: {
+      create: {
+        name: { en: "Create an issue" },
+        endpoint: "create-issue",
+        on: ["task"],
+        write: '{"set": {"issue.number": result.number, "issue.link": {"url": result.url, "text": "#" & result.number}, "issue.state": "open"}}',
+      },
+      unlink: {
+        name: { en: "Unlink the issue" },
+        on: ["task"],
+        menu: true,
+        admin_only: true,
+        write: '$exists(held."issue.number") ? {"set": {"issue.number": null, "issue.link": null, "issue.state": null}}',
+      },
+    },
   });
 }
