@@ -226,16 +226,16 @@ export function issuesPlugin() {
 
   const assign = defineEndpoint({
     direction: "write",
-    actors: ["member"],
+    actors: ["member", "installation"],
     public: true,
-    requires: { all_of: ["workspace", "account"] },
+    requires: { all_of: ["workspace"] },
     params: { number: { type: "int", label: { en: "Issue" }, required: true } },
     returns: { assignee: "string" },
     request: {
       method: "POST",
       url: `${api("/repos/")} & connections.workspace.owner & "/issues/" & params.number & "/assignees"`,
-      body: '{"assignee": "me", "seen": $keys(connections)}',
-      connection: "account",
+      body: '{"assignee": "me", "seen": [$keys(connections)], "own": connection}',
+      connection: { member: "account", installation: "workspace" },
     },
     map: '{"assignee": response.body.assignee}',
   });

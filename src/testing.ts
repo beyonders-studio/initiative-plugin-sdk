@@ -37,7 +37,7 @@
  * `write` answering what is not a change.
  */
 
-import type { Change, ConnectionState, ErrorRule, ItemKind, StatusMatch, TargetedChange, VendorRequest } from "./contract.js";
+import type { ActorKind, Change, ConnectionState, ErrorRule, ItemKind, StatusMatch, TargetedChange, VendorRequest } from "./contract.js";
 import { CAPS, PLATFORM_CODES } from "./contract.js";
 import type { AnyPlugin, DeclarativeEndpoint, ReturnSpec } from "./define.js";
 import { evaluate, ExpressionError } from "./expression.js";
@@ -58,7 +58,7 @@ export interface RenderedRequest {
   url: string;
   headers: Record<string, string>;
   body?: unknown;
-  /** The connection whose credential Initiative would add. */
+  /** The connection whose credential Initiative would add, for the call's actor when the request names one per actor. */
   connection?: string;
 }
 
@@ -130,7 +130,9 @@ class Context {
     readonly hosts: readonly string[],
     recorded: Recorded & InstallSettings,
     /** The endpoint's own rules, and whether an answer outside 2xx fails the run. */
-    readonly rules: readonly ErrorRule[] | null
+    readonly rules: readonly ErrorRule[] | null,
+    /** Who the call is made as, when it is made as one of an endpoint's actors. */
+    readonly actor?: ActorKind
   ) {
     this.clock = recorded.now ?? new Date();
     this.now = new Date(this.clock).toISOString();
@@ -145,6 +147,17 @@ class Context {
       if (!(error instanceof ExpressionError)) throw error;
       throw new Outcome({ unavailable: "mapping-failed", detail: `${where}: ${error.message}` });
     }
+  }
+
+  /** The connection a request names, for the call's actor when it names one per actor. */
+  connection(request: VendorRequest, where: string): string | undefined {
+    const named = request.connection;
+    if (typeof named !== "object") return named;
+    const id = this.actor === undefined ? undefined : named[this.actor];
+    if (id === undefined) {
+      throw new TypeError(`${where} names no connection for ${this.actor === undefined ? "a call with no actor" : `the ${this.actor}`}`);
+    }
+    return id;
   }
 
   async holds(text: string, document: object, where: string): Promise<boolean> {
@@ -258,12 +271,13 @@ async function render(
     }
     body = { query: request.graphql.query, ...(variables === undefined ? {} : { variables }) };
   }
+  const connection = context.connection(request, where);
   return {
     method: request.method,
     url: url.toString(),
     headers,
     ...(body === undefined ? {} : { body }),
-    ...(request.connection ? { connection: request.connection } : {}),
+    ...(connection ? { connection } : {}),
   };
 }
 
@@ -414,12 +428,12 @@ async function answerEndpoint(
   const answers: Record<string, Answer> = {};
   let read: object = base;
   for (const [index, step] of steps.entries()) {
+    const where = endpoint.steps ? `steps/${index}/request` : "request";
     read = {
       ...base,
-      connection: given[step.request.connection ?? ""] ?? {},
+      connection: given[context.connection(step.request, where) ?? ""] ?? {},
       ...(endpoint.steps ? { steps: { ...answers } } : {}),
     };
-    const where = endpoint.steps ? `steps/${index}/request` : "request";
     const response = await perform(step.request, read, context, where);
     if (endpoint.steps) answers[step.name] = response;
     read = { ...read, ...(endpoint.steps ? { steps: { ...answers } } : {}), response };
@@ -439,10 +453,12 @@ async function answerEndpoint(
  * One declarative endpoint: its request or steps rendered from `params`, the
  * `connections`' non-secret fields (keyed by connection id), the install's
  * `settings` and `aliases`, and `now`, answered from `responses`, and its map
- * held to the declared returns. An expression reads `connection`, the fields
- * of the connection its request names, and `connections`, the fields of each
- * connection the endpoint's `requires` names that `connections` holds, by id.
- * The call has no actor: who may run it, and on whose credential, is
+ * held to the declared returns. The call is made as `actor`, by default the
+ * endpoint's first: a request naming a connection per actor carries the one it
+ * names for that actor, and the run throws a TypeError when it names none. An
+ * expression reads `connection`, the fields of the connection its request
+ * carries, and `connections`, the fields of each connection the endpoint's
+ * `requires` names that `connections` holds, by id. Who may make the call is
  * Initiative's to decide.
  */
 export async function runEndpoint(
@@ -452,18 +468,21 @@ export async function runEndpoint(
     InstallSettings & {
       params?: Record<string, unknown>;
       connections?: Record<string, Record<string, unknown>>;
+      /** Who the call is made as. Default: the endpoint's first actor. */
+      actor?: ActorKind;
     }
 ): Promise<Run<Record<string, unknown>>> {
   const endpoint = declarative(plugin, name);
-  const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? []);
+  const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? [], call.actor ?? endpoint.actors?.[0]);
   return context.run(() => answerEndpoint(endpoint, call, context));
 }
 
 /**
  * A declarative action, run on one item with the `params` the reader answered,
  * from one of a list field's elements when `element` names its `ref`. Its
- * endpoint, when it names one, is sent those params and rendered and answered
- * as {@link runEndpoint} does it, its expressions also reading `item` and
+ * endpoint, when it names one, is sent those params, made as `actor` (by
+ * default the endpoint's first), and rendered and answered as
+ * {@link runEndpoint} does it, its expressions also reading `item` and
  * `element`; an answer of unavailable or transient is the run's, and nothing is
  * written. Its `write`, when it has one, then answers the change Initiative
  * makes to the plug-in's values on the item, reading `item`, `held` (those
@@ -485,6 +504,8 @@ export async function runAction(
       /** The `ref` of the list element it was run from. */
       element?: string;
       connections?: Record<string, Record<string, unknown>>;
+      /** Who its endpoint's call is made as. Default: the endpoint's first actor. */
+      actor?: ActorKind;
     }
 ): Promise<ActionRun> {
   const action = plugin.actions?.[name];
@@ -496,7 +517,12 @@ export async function runAction(
     throw new TypeError(`'${name}' is offered on no list's elements`);
   }
   const endpoint = action.endpoint === undefined ? undefined : declarative(plugin, action.endpoint);
-  const context = new Context(plugin.hosts ?? [], { ...call, responses: call.responses ?? [] }, endpoint?.errors ?? []);
+  const context = new Context(
+    plugin.hosts ?? [],
+    { ...call, responses: call.responses ?? [] },
+    endpoint?.errors ?? [],
+    call.actor ?? endpoint?.actors?.[0]
+  );
   const subject = { item: call.item, ...(call.element === undefined ? {} : { element: call.element }) };
   return context.run<{ result?: Record<string, unknown>; change?: Change }>(async () => {
     const sent = { params: call.params, connections: call.connections, subject };
@@ -510,14 +536,14 @@ export async function runAction(
 }
 
 /**
- * A declarative schedule's run in one community. Its `params` answer the
- * endpoint's params from `since`, `now`, `connection` (the fields of the
- * connection the endpoint's first request names), `settings` and `aliases`; the
- * endpoint is rendered and answered with them as {@link runEndpoint} does it;
- * and its `write` answers, from the endpoint's mapped answer as `result` beside
- * `since`, `now`, `settings` and `aliases`, the changes Initiative makes as the
- * install. `since` is when the schedule last succeeded there, as ISO 8601:
- * null, the default, the first time.
+ * A declarative schedule's run in one community, made as the installation. Its
+ * `params` answer the endpoint's params from `since`, `now`, `connection` (the
+ * fields of the connection the endpoint's first request names), `settings` and
+ * `aliases`; the endpoint is rendered and answered with them as
+ * {@link runEndpoint} does it; and its `write` answers, from the endpoint's
+ * mapped answer as `result` beside `since`, `now`, `settings` and `aliases`,
+ * the changes Initiative makes as the install. `since` is when the schedule
+ * last succeeded there, as ISO 8601: null, the default, the first time.
  */
 export async function runSchedule(
   plugin: AnyPlugin,
@@ -531,11 +557,11 @@ export async function runSchedule(
   const schedule = plugin.schedules?.[name];
   if (!schedule || "run" in schedule) throw new TypeError(`'${name}' is not a declarative schedule of this plug-in`);
   const endpoint = declarative(plugin, schedule.endpoint);
-  const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? []);
+  const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? [], "installation");
   return context.run<{ result: Record<string, unknown>; writes: TargetedChange[] }>(async () => {
     const since = call.since ?? null;
     const first = endpoint.steps?.[0].request ?? endpoint.request!;
-    const connection = call.connections?.[first.connection ?? ""] ?? {};
+    const connection = call.connections?.[context.connection(first, endpoint.steps ? "steps/0/request" : "request") ?? ""] ?? {};
     const read = { since, now: context.now, ...context.installed };
     const params = schedule.params === undefined ? undefined : await context.value(schedule.params, { ...read, connection }, "params");
     if (params !== undefined && (!params || typeof params !== "object" || Array.isArray(params))) {

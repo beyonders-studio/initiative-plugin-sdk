@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CAPS } from "../src/contract.js";
+import { CAPS, type ActorKind } from "../src/contract.js";
 import { evaluate, runAction, runAfterConnect, runEndpoint, runHealth, runSchedule, runWebhook } from "../src/testing.js";
 import { issuesPlugin } from "./support/plugin.js";
 
@@ -95,12 +95,26 @@ describe("runEndpoint", () => {
           method: "POST",
           url: "https://api.tracker.example/repos/acme/issues/7/assignees",
           headers: {},
-          body: { assignee: "me", seen: ["workspace", "account"] },
+          body: { assignee: "me", seen: ["workspace"], own: {} },
           connection: "account",
         },
       ],
       result: { assignee: "alice" },
     });
+  });
+
+  it("makes the call as its actor, by default the endpoint's first, on the connection its request names for that actor", async () => {
+    const connections = { ...workspace, account: { login: "alice" } };
+    const sent = async (definition: typeof plugin, actor?: ActorKind) =>
+      (await runEndpoint(definition, "assign", { actor, params: { number: 7 }, connections, now, responses: [{ status: 201 }] })).requests[0];
+    expect(await sent(plugin)).toMatchObject({ body: { own: { login: "alice" } }, connection: "account" });
+    expect(await sent(plugin, "installation")).toMatchObject({ body: { own: { owner: "acme" } }, connection: "workspace" });
+
+    const changed = issuesPlugin();
+    changed.endpoints!.assign.actors = ["installation", "member"];
+    expect(await sent(changed)).toMatchObject({ connection: "workspace" });
+    changed.endpoints!.assign.request!.connection = { member: "account" };
+    await expect(sent(changed)).rejects.toThrow("request names no connection for the installation");
   });
 
   it("fails on an answer that does not fit the returns, and on a response nothing asked for", async () => {
@@ -319,6 +333,21 @@ describe("runAction", () => {
     });
   });
 
+  it("makes its endpoint's call as its actor", async () => {
+    const changed = issuesPlugin();
+    changed.actions!.link.endpoint = "assign";
+    delete changed.actions!.link.write;
+    const run = await runAction(changed, "link", {
+      item: task,
+      params: { number: 7 },
+      actor: "installation",
+      connections: workspace,
+      now,
+      responses: [{ status: 201, body: { assignee: "alice" } }],
+    });
+    expect(run).toMatchObject({ requests: [{ connection: "workspace" }], result: { assignee: "alice" } });
+  });
+
   it("fails on a write that is not a change, and on an item, params or an element the action does not take", async () => {
     const changed = issuesPlugin();
     changed.actions!.unlink.write = '{"issue.number": null}';
@@ -360,6 +389,15 @@ describe("runSchedule", () => {
         { target: { holding: { key: "issue.number", value: "9" } }, set: { "issue.state": "open" } },
       ],
     });
+  });
+
+  it("makes its read as the installation, on the connection a request names for it", async () => {
+    const changed = issuesPlugin();
+    const read = changed.endpoints!["updated-issues"];
+    read.actors = ["member", "installation"];
+    read.request!.connection = { member: "account", installation: "workspace" };
+    const run = await runSchedule(changed, "sync", { connections: workspace, now, responses: [{ body: [] }] });
+    expect(run.requests).toEqual([expect.objectContaining({ connection: "workspace" })]);
   });
 
   it("asks for everything the first time, writes nothing when nothing changed, and nothing on a failure", async () => {

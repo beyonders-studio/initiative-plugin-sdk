@@ -947,10 +947,40 @@ it("lists a repository's open issues", async () => {
   request's `connection` names, as `auth` says: `Authorization: Bearer
   <token>` unless `auth: { header, prefix }` says otherwise. Every address
   must be https on one of `hosts`, exact or with one leading `*.` label. A
-  request or step on an `interactive` connection names it in the endpoint's
-  `requires` too, or `build` fails. A call made as a member carries a
-  `static` connection's credential only when `requires` names it, and is
-  refused otherwise.
+  request or step naming an `interactive` connection for every call names it
+  in the endpoint's `requires` too, and is on no endpoint whose `actors`
+  include `installation`, or `build` fails: a call made as the installation
+  has no member's credential. A call made as a member carries a `static`
+  connection's credential only when `requires` names it, and is refused
+  otherwise.
+- **A connection per actor.** A write's request or step may name one
+  connection for each of the endpoint's `actors` in place of one for every
+  call, so a call made as the member carries the member's own credential and
+  one made as the installation the community's:
+
+  ```ts
+  export const comment = defineEndpoint({
+    direction: "write",
+    actors: ["member", "installation"],
+    params: {
+      number: { type: "int", label: { en: "Issue" }, required: true },
+      text: { type: "string", label: { en: "Comment" }, required: true },
+    },
+    returns: { id: "int" },
+    request: {
+      method: "POST",
+      url: '"https://api.tracker.example/issues/" & params.number & "/comments"',
+      body: '{"body": params.text}',
+      connection: { member: "account", installation: "workspace" },
+    },
+    map: '{"id": response.body.id}',
+  });
+  ```
+
+  `member` names an `interactive` connection and `installation` a `static`
+  one, for exactly the actors the endpoint declares. The member's needs no
+  `requires`: a call made as the member requires it. An expression's
+  `connection` holds the fields of the one the call carries.
 - **`steps`** in place of `request` makes up to three calls in order; each
   reads the earlier ones as `steps.<name>`, and so does the map.
 - **`paging`** on a request reads more pages before the map runs:
@@ -1054,11 +1084,14 @@ it("lists a repository's open issues", async () => {
 render each request as Initiative sends it, less the credential, answer it from
 the recorded `responses` in order, and return the requests beside the result or
 the code the run answered. `runEndpoint` takes each connection's fields by id
-in `connections`; it has no actor, so it does not refuse a call the way
-Initiative would for who is making it. `runAction` takes the `item`, what the
-install `held` on it, the `params` the reader answered and the `element` it was
-run from, and answers the endpoint's `result` and the `change`; `runSchedule`
-takes `since`, and answers the endpoint's `result` and the `writes`;
+in `connections`, and the `actor` the call is made as, by default the
+endpoint's first: a request naming a connection per actor carries that
+actor's. It does not refuse a call the way Initiative would for who is making
+it. `runAction` takes the `item`, what the install `held` on it, the `params`
+the reader answered, the `element` it was run from and its endpoint's `actor`,
+and answers the endpoint's `result` and the `change`; `runSchedule` takes
+`since`, makes its read as the installation, and answers the endpoint's
+`result` and the `writes`;
 `runWebhook` answers a delivery's `event`, `writes` and `status`. Every runner
 takes the install's `settings` and `aliases`. A run fails when a request has no
 recorded answer left, when an answer is left over, when the map's answer does
