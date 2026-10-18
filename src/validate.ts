@@ -7,10 +7,11 @@
  * service prefix), the features/blocks cross-check in both directions, UTF-8
  * byte-size caps, the rules tying a connection's `flow` and `token` to its
  * scope and fields, what a vendor `setup` writes to, the bounds, ids and
- * endpoints of `schedules`, which terms each kind's schedules, actions and
- * webhook events take, and the unique keys and ids of `fields`, `parts` and
- * `actions`, what a part's nodes and an action name, and a part's size and
- * depth.
+ * endpoints of `schedules`, which terms each kind's schedules, actions, fields
+ * and webhook events take, the unique keys and ids of `fields`, `parts`,
+ * `actions` and `settings`, what a part's nodes, a field's element actions and
+ * an action's endpoint and `params` name, the placeholders in a part's text,
+ * and a part's size and depth.
  *
  * {@link validateManifest} runs the schema and then every one of those except
  * the byte caps. It also reports every term the contract does not declare: a
@@ -653,19 +654,39 @@ function referenceProblems(body: Manifest, publicId: string | undefined): Valida
     (body[block] ?? []).forEach((item, index) => checkRequires(item.requires, `/${block}/${index}/requires`));
   }
   (body.actions ?? []).forEach((action, index) => {
+    const where = `/actions/${index}`;
+    if (action.endpoint === undefined) {
+      if (action.params) problems.push({ where: `${where}/params`, message: "an action asks for its endpoint's parameters, and names no endpoint" });
+      return;
+    }
     // Initiative calls an action's endpoint for the reader. A container's does
     // the work, so it is a write; a declarative plug-in's `write` does the work,
     // so its endpoint may be a read that fetches what the write keeps.
-    if (action.endpoint === undefined) return;
     const named = byId.get(action.endpoint);
     const allowed = body.service === undefined ? ["read", "write"] : ["write"];
     if (!named || !allowed.includes(named.direction)) {
       problems.push({
-        where: `/actions/${index}/endpoint`,
+        where: `${where}/endpoint`,
         message: named
           ? `names '${action.endpoint}', which is a ${named.direction} endpoint`
           : `names '${action.endpoint}', which this manifest does not declare`,
       });
+      return;
+    }
+    // The endpoint is sent what the reader was asked for, and nothing else.
+    const params = named.params ?? [];
+    (action.params ?? []).forEach((key, position) => {
+      if (!params.some((param) => param.key === key)) {
+        problems.push({ where: `${where}/params/${position}`, message: `'${key}' is not a parameter of '${action.endpoint}'` });
+      }
+    });
+    for (const param of params) {
+      if (param.required && !action.params?.includes(param.key)) {
+        problems.push({
+          where: `${where}/params`,
+          message: `'${action.endpoint}' requires '${param.key}', which the action does not ask for`,
+        });
+      }
     }
   });
   (body.widgets ?? []).forEach((widget, index) => {
@@ -777,6 +798,14 @@ function connectionProblems(body: Manifest): ValidationProblem[] {
       for (const key of ["exchange_url", "iss", "key"] as const) {
         templated.push([`${where}/token/${key}`, connection.token[key]]);
       }
+      // Every string in the body, at any depth, is rendered as the others are.
+      const strings = (value: unknown, at: string): void => {
+        if (typeof value === "string") templated.push([at, value]);
+        else if (value && typeof value === "object") {
+          for (const [key, child] of Object.entries(value)) strings(child, `${at}/${key}`);
+        }
+      };
+      strings(connection.token.exchange_body, `${where}/token/exchange_body`);
     }
     for (const [at, value] of templated) {
       for (const name of templateNames(value ?? "")) {
@@ -913,9 +942,11 @@ function scheduleProblems(body: Manifest): ValidationProblem[] {
 }
 
 /**
- * Fields, parts and actions: each declared once, and every part a tree Initiative
- * can draw on every item kind it is offered on. A node naming a field or an
- * action that is not offered where the part is would draw nothing there.
+ * Fields, parts, actions and settings: each declared once, every part a tree
+ * Initiative can draw on every item kind it is offered on, and a list field's
+ * element actions offered wherever the field is. A node or a field naming a
+ * field or an action that is not offered where it is would draw nothing there,
+ * and a part's text names only the placeholders Initiative fills.
  */
 function partProblems(body: Manifest): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
@@ -931,27 +962,50 @@ function partProblems(body: Manifest): ValidationProblem[] {
   const fields = declared("fields", "key", (body.fields ?? []).map((field) => [field.key, field.on]));
   const actions = declared("actions", "id", (body.actions ?? []).map((action) => [action.id, action.on]));
   declared("parts", "id", (body.parts ?? []).map((part) => [part.id, part.on]));
+  const settings = declared("settings", "key", (body.settings ?? []).map((setting) => [setting.key, []]));
+  // What a part's node or a field names, offered on every kind its holder is.
+  const reaches = (what: string, kinds: ItemKind[] | undefined, on: ItemKind[], holder: "part" | "field", where: string) => {
+    if (!kinds) {
+      problems.push({ where, message: `'${what}' is not declared by this manifest` });
+      return;
+    }
+    const missing = on.filter((kind) => !kinds.includes(kind));
+    if (missing.length) {
+      problems.push({ where, message: `'${what}' is not offered on ${missing.join(", ")}, where this ${holder} is` });
+    }
+  };
+
+  (body.fields ?? []).forEach((field, index) => {
+    const where = `/fields/${index}/actions`;
+    if (field.actions && !field.list) problems.push({ where, message: "actions are offered on a list's elements, and this field is not a list" });
+    field.actions?.forEach((id, position) => reaches(id, actions.get(id), field.on, "field", `${where}/${position}`));
+  });
 
   (body.parts ?? []).forEach((part, index) => {
     let count = 0;
-    const reaches = (what: string, kinds: ItemKind[] | undefined, where: string) => {
-      if (!kinds) {
-        problems.push({ where, message: `'${what}' is not declared by this manifest` });
-        return;
-      }
-      const missing = part.on.filter((kind) => !kinds.includes(kind));
-      if (missing.length) {
-        problems.push({ where, message: `'${what}' is not offered on ${missing.join(", ")}, where this part is` });
-      }
-    };
     const visit = (node: PartNode, depth: number, where: string): void => {
       count += 1;
       if (depth > CAPS.partDepth) {
         problems.push({ where, message: `nested deeper than ${CAPS.partDepth}` });
         return;
       }
-      if (node.type === "field" || node.type === "value") reaches(node.props.field, fields.get(node.props.field), `${where}/props/field`);
-      if (node.type === "button") reaches(node.props.action, actions.get(node.props.action), `${where}/props/action`);
+      if (node.type === "field" || node.type === "value") {
+        reaches(node.props.field, fields.get(node.props.field), part.on, "part", `${where}/props/field`);
+      }
+      if (node.type === "button") reaches(node.props.action, actions.get(node.props.action), part.on, "part", `${where}/props/action`);
+      if (node.type === "text") {
+        for (const [language, words] of Object.entries(node.props.text)) {
+          for (const name of typeof words === "string" ? templateNames(words) : []) {
+            if (name === "item.id" || (name.startsWith("settings.") && settings.has(name.slice("settings.".length)))) continue;
+            problems.push({
+              where: `${where}/props/text/${language}`,
+              message: name.startsWith("settings.")
+                ? `'{${name}}' names a setting this manifest does not declare`
+                : `'{${name}}' is not a placeholder: a part's text names '{item.id}' and '{settings.<key>}'`,
+            });
+          }
+        }
+      }
       if (node.type === "section" || node.type === "stack") {
         (node.children ?? []).forEach((child, position) => visit(child, depth + 1, `${where}/children/${position}`));
       }
@@ -1049,6 +1103,11 @@ function kindProblems(body: Manifest): ValidationProblem[] {
         push(`/actions/${index}`, "a container plug-in's action names the write endpoint its handler answers");
       }
       if (action.write !== undefined) push(`/actions/${index}/write`, "a container plug-in's action is answered by its handler");
+    });
+    (body.fields ?? []).forEach((field, index) => {
+      if (field.actions !== undefined) {
+        push(`/fields/${index}/actions`, "a container plug-in's action is not told which element it was run from: its handler is handed the item alone");
+      }
     });
     endpoints.forEach((endpoint, index) => {
       for (const key of DECLARATIVE_TERMS) {

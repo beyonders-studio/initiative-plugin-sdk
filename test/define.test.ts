@@ -19,7 +19,7 @@ describe("manifestOf", () => {
       JSON.stringify(
         {
           plugin_kind: "service",
-          service: { public_id: "acme.tracker", protocol: 1, scopes: ["projects:read", "plugins:acme.github"] },
+          service: { public_id: "acme.tracker", protocol: 1, scopes: ["projects:read", "plugins:acme.github"], calls_plugins: true },
           features: ["actions", "dashboards", "endpoints", "fields", "pages", "parts", "widgets"],
           default_name: "Tracker",
           vendor: { fields: [{ key: "client_id", type: "string", required: true, label: { en: "Client id" } }] },
@@ -194,7 +194,7 @@ describe("the oldest plug-in API it needs", () => {
 describe("a declarative definition", () => {
   const declarative = manifestOf(issuesPlugin());
 
-  it("writes its hosts and scopes and no service block, and names each endpoint it names by id", () => {
+  it("writes its hosts and scopes and no service block, names each endpoint it names by id, and ends with its settings and help", () => {
     expect(declarative).not.toHaveProperty("service");
     expect(Object.keys(declarative).slice(0, 6)).toEqual(["plugin_kind", "features", "default_name", "hosts", "scopes", "vendor"]);
     expect(declarative.hosts).toEqual(["api.tracker.example", "*.tracker.example"]);
@@ -202,7 +202,16 @@ describe("a declarative definition", () => {
     expect(declarative.webhooks?.events?.map((event) => event.emit)).toEqual(["plugin.acme.issues.issue-opened", undefined]);
     expect(declarative.endpoints?.[1]).toMatchObject({ id: "plugin.acme.issues.label", steps: [{ name: "current" }, { name: "set" }] });
     expect(declarative.schedules).toMatchObject([{ id: "sync", every: "1h", endpoint: "plugin.acme.issues.updated-issues" }]);
-    expect(declarative.actions?.map((action) => action.endpoint)).toEqual(["plugin.acme.issues.create-issue", undefined]);
+    expect(declarative.actions?.map((action) => action.endpoint)).toEqual([
+      "plugin.acme.issues.create-issue",
+      undefined,
+      "plugin.acme.issues.link-issue",
+      undefined,
+    ]);
+    expect(Object.keys(declarative).slice(-2)).toEqual(["settings", "help"]);
+    expect(declarative.settings).toEqual([
+      { key: "prefix", type: "string", label: { en: "Reference prefix" }, unique: true, assigned: "community_name" },
+    ]);
   });
 
   it("is a manifest the SDK's own validation passes", () => {
@@ -283,7 +292,7 @@ describe("the definition's types", () => {
     definePlugin({ ...name, endpoints: { read, write }, schedules: { s: { every: "1h", endpoint: "write", write: "[]" } } });
   });
 
-  it("refuse an action naming an endpoint that is not a declared write, or neither an endpoint nor a write", () => {
+  it("refuse an action naming an endpoint that is not a declared write, neither an endpoint nor a write, or params with no endpoint", () => {
     const read = defineEndpoint({ direction: "read", handler: async () => ({ result: {} }) });
     const write = defineEndpoint({ direction: "write", handler: async () => ({ result: {} }) });
     const name = { publicId: "acme.x", uid: "K7M2QX8N4TVB9E", name: "X" };
@@ -293,6 +302,8 @@ describe("the definition's types", () => {
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, endpoint: "read", on: ["task"] } } });
     // @ts-expect-error an action that calls nothing and writes nothing does nothing
     definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, on: ["task"] } } });
+    // @ts-expect-error params are asked for the endpoint an action calls
+    definePlugin({ ...name, endpoints: { read, write }, actions: { a: { name: { en: "A" }, write: '{"set": {}}', params: ["p"], on: ["task"] } } });
   });
 
   it("refuse a widget or a summary naming an endpoint that is not a declared read", () => {

@@ -16,10 +16,16 @@
  *   to retry;
  * - `{ refused }`: an `after_connect` that refused the connection.
  *
+ * Every runner takes the install's `settings`, each setting's value by key, and
+ * `aliases`, each unique setting's earlier values by key, which every
+ * expression reads; both default to none.
+ *
  * An action's run answers the `change` its `write` makes to the plug-in's values
  * on the item, and a schedule's or a delivery's the targeted `writes`, each held
- * to the contract's `change` or `targetedChange`; a `write` answering nothing
- * changes nothing.
+ * to the contract's `change` or `targetedChange`, to one operation on each key,
+ * and to the plug-in's fields: a list field's whole value is a list of
+ * elements, and only a list's elements are upserted or removed. A `write`
+ * answering nothing changes nothing.
  *
  * A rendered request carries no credential: Initiative adds the one its
  * `connection` names, as the plug-in's `auth` says. A predicate (`when`, `more`,
@@ -90,6 +96,14 @@ export interface Recorded {
   now?: Date | string | number;
 }
 
+/** The install's settings, as every expression reads them. */
+export interface InstallSettings {
+  /** Each setting's value, by key. */
+  settings?: Record<string, string>;
+  /** Each unique setting's earlier values, by key. */
+  aliases?: Record<string, string[]>;
+}
+
 /** An answer as an expression reads it, `response` or `steps.<name>`. */
 interface Answer {
   status: number;
@@ -107,17 +121,20 @@ class Outcome {
 class Context {
   readonly requests: RenderedRequest[] = [];
   readonly now: string;
+  /** What every expression reads of the install. */
+  readonly installed: Required<InstallSettings>;
   private readonly clock: Date | string | number;
   private readonly responses: RecordedResponse[];
 
   constructor(
     readonly hosts: readonly string[],
-    recorded: Recorded,
+    recorded: Recorded & InstallSettings,
     /** The endpoint's own rules, and whether an answer outside 2xx fails the run. */
     readonly rules: readonly ErrorRule[] | null
   ) {
     this.clock = recorded.now ?? new Date();
     this.now = new Date(this.clock).toISOString();
+    this.installed = { settings: recorded.settings ?? {}, aliases: recorded.aliases ?? {} };
     this.responses = [...recorded.responses];
   }
 
@@ -323,23 +340,42 @@ function fits(answer: unknown, returns: Record<string, ReturnSpec> | undefined, 
 
 /**
  * Holds what a `write` answered to the contract's definition `name`, `change`
- * or `targetedChange`, and each value it sets to the cap on one value.
+ * or `targetedChange`, to one operation on each key, and to the plug-in's
+ * fields: a list field's whole value is a list of elements, and only a list's
+ * elements are upserted or removed. Each value, and each element, is held to
+ * the cap on one value.
  */
-function fitsChange(answer: unknown, name: "change" | "targetedChange", where: string): void {
+function fitsChange(plugin: AnyPlugin, answer: unknown, name: "change" | "targetedChange", where: string): void {
   const check = definitionValidator(name);
   if (!check(answer)) {
     const why = (check.errors ?? []).map((error) => `${error.instancePath || "/"} ${error.message}`).join("; ");
     throw new Error(`${where} answered ${text(answer)}, which is not a ${name === "change" ? "change" : "targeted change"}: ${why}`);
   }
-  for (const [key, value] of Object.entries((answer as Change).set)) {
-    if (value !== null && Buffer.byteLength(JSON.stringify(value), "utf-8") > CAPS.metadataValueBytes) {
-      throw new Error(`${where} sets '${key}' to more than ${CAPS.metadataValueBytes} bytes as JSON`);
+  const { set = {}, upsert = {}, remove = {} } = answer as Change;
+  const keys = [...Object.keys(set), ...Object.keys(upsert), ...Object.keys(remove)];
+  const twice = keys.find((key, index) => keys.indexOf(key) !== index);
+  if (twice !== undefined) throw new Error(`${where} changes '${twice}' twice: a change sets, upserts or removes a key`);
+  const list = (key: string) => plugin.fields?.[key]?.list === true;
+  for (const key of [...Object.keys(upsert), ...Object.keys(remove)]) {
+    if (plugin.fields?.[key] && !list(key)) throw new Error(`${where} changes elements of '${key}', which is not a list field`);
+  }
+  const values = Object.entries(upsert).flatMap(([key, elements]) => elements.map((element): [string, unknown] => [key, element]));
+  const element = definitionValidator("listElement");
+  for (const [key, value] of Object.entries(set)) {
+    if (value === null) continue;
+    if (!list(key)) values.push([key, value]);
+    else if (Array.isArray(value) && value.every((one) => element(one))) values.push(...value.map((one): [string, unknown] => [key, one]));
+    else throw new Error(`${where} sets '${key}', a list field, to ${text(value)}, which is not a list of elements`);
+  }
+  for (const [key, value] of values) {
+    if (Buffer.byteLength(JSON.stringify(value), "utf-8") > CAPS.metadataValueBytes) {
+      throw new Error(`${where} gives '${key}' a value of more than ${CAPS.metadataValueBytes} bytes as JSON`);
     }
   }
 }
 
 /** What a `write` answered, as targeted changes: a list of at most `writeTargets`. Nothing is no change. */
-function targeted(answer: unknown, where: string): TargetedChange[] {
+function targeted(plugin: AnyPlugin, answer: unknown, where: string): TargetedChange[] {
   if (answer === undefined) return [];
   if (!Array.isArray(answer)) {
     throw new Error(
@@ -348,7 +384,7 @@ function targeted(answer: unknown, where: string): TargetedChange[] {
     );
   }
   if (answer.length > CAPS.writeTargets) throw new Error(`${where} answered ${answer.length} changes, more than ${CAPS.writeTargets}`);
-  answer.forEach((change, index) => fitsChange(change, "targetedChange", `${where}/${index}`));
+  answer.forEach((change, index) => fitsChange(plugin, change, "targetedChange", `${where}/${index}`));
   return answer;
 }
 
@@ -363,17 +399,17 @@ function declarative(plugin: AnyPlugin, name: string): DeclarativeEndpoint<any, 
  * One declarative endpoint's request or steps, answered in `context`, and its
  * map held to the declared returns: what {@link runEndpoint} runs, and what an
  * action or a schedule runs for the endpoint it names. An action's call also
- * reads its `item`.
+ * reads its `subject`: the `item`, and the `element` it was run from.
  */
 async function answerEndpoint(
   endpoint: DeclarativeEndpoint<any, any>,
-  call: { params?: Record<string, unknown>; connections?: Record<string, Record<string, unknown>>; item?: object },
+  call: { params?: Record<string, unknown>; connections?: Record<string, Record<string, unknown>>; subject?: object },
   context: Context
 ): Promise<{ result: Record<string, unknown> } | { unavailable: string }> {
   const given = call.connections ?? {};
   const required = [...(endpoint.requires?.all_of ?? []), ...(endpoint.requires?.any_of ?? [])];
   const connections = Object.fromEntries(required.filter((id) => Object.hasOwn(given, id)).map((id) => [id, given[id]]));
-  const base = { params: call.params ?? {}, connections, now: context.now, ...(call.item ? { item: call.item } : {}) };
+  const base = { params: call.params ?? {}, connections, now: context.now, ...context.installed, ...call.subject };
   const steps = endpoint.steps ?? [{ name: "", request: endpoint.request! }];
   const answers: Record<string, Answer> = {};
   let read: object = base;
@@ -401,20 +437,22 @@ async function answerEndpoint(
 
 /**
  * One declarative endpoint: its request or steps rendered from `params`, the
- * `connections`' non-secret fields (keyed by connection id) and `now`, answered
- * from `responses`, and its map held to the declared returns. An expression
- * reads `connection`, the fields of the connection its request names, and
- * `connections`, the fields of each connection the endpoint's `requires` names
- * that `connections` holds, by id. The call has no actor: who may run it, and
- * on whose credential, is Initiative's to decide.
+ * `connections`' non-secret fields (keyed by connection id), the install's
+ * `settings` and `aliases`, and `now`, answered from `responses`, and its map
+ * held to the declared returns. An expression reads `connection`, the fields
+ * of the connection its request names, and `connections`, the fields of each
+ * connection the endpoint's `requires` names that `connections` holds, by id.
+ * The call has no actor: who may run it, and on whose credential, is
+ * Initiative's to decide.
  */
 export async function runEndpoint(
   plugin: AnyPlugin,
   name: string,
-  call: Recorded & {
-    params?: Record<string, unknown>;
-    connections?: Record<string, Record<string, unknown>>;
-  }
+  call: Recorded &
+    InstallSettings & {
+      params?: Record<string, unknown>;
+      connections?: Record<string, Record<string, unknown>>;
+    }
 ): Promise<Run<Record<string, unknown>>> {
   const endpoint = declarative(plugin, name);
   const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? []);
@@ -422,55 +460,71 @@ export async function runEndpoint(
 }
 
 /**
- * A declarative action, run on one item. Its endpoint, when it names one, is
- * rendered and answered as {@link runEndpoint} does it, with no params and its
- * expressions also reading `item`; an answer of unavailable or transient is the
- * run's, and nothing is written. Its `write`, when it has one, then answers the
- * change Initiative makes to the plug-in's values on the item, reading `item`,
- * `held` (those values as they stand, by key), `result` (the endpoint's mapped
- * answer, absent with no endpoint) and `now`. Like the endpoint's, an
- * expression that fails answers `mapping-failed`.
+ * A declarative action, run on one item with the `params` the reader answered,
+ * from one of a list field's elements when `element` names its `ref`. Its
+ * endpoint, when it names one, is sent those params and rendered and answered
+ * as {@link runEndpoint} does it, its expressions also reading `item` and
+ * `element`; an answer of unavailable or transient is the run's, and nothing is
+ * written. Its `write`, when it has one, then answers the change Initiative
+ * makes to the plug-in's values on the item, reading `item`, `held` (those
+ * values as they stand, by key), `result` (the endpoint's mapped answer, absent
+ * with no endpoint), `params`, `element`, `settings`, `aliases` and `now`. Like
+ * the endpoint's, an expression that fails answers `mapping-failed`.
  */
 export async function runAction(
   plugin: AnyPlugin,
   name: string,
-  call: Recorded & {
-    item: { kind: ItemKind; id: number; title: string };
-    held?: Record<string, unknown>;
-    connections?: Record<string, Record<string, unknown>>;
-  }
+  call: Recorded &
+    InstallSettings & {
+      item: { kind: ItemKind; id: number; title: string };
+      held?: Record<string, unknown>;
+      /** What the reader answered, for the params the action asks for. */
+      params?: Record<string, unknown>;
+      /** The `ref` of the list element it was run from. */
+      element?: string;
+      connections?: Record<string, Record<string, unknown>>;
+    }
 ): Promise<ActionRun> {
   const action = plugin.actions?.[name];
   if (!action) throw new TypeError(`'${name}' is not an action of this plug-in`);
   if (!action.on.includes(call.item.kind)) throw new TypeError(`'${name}' is not offered on ${call.item.kind}`);
+  const unasked = Object.keys(call.params ?? {}).find((key) => !action.params?.includes(key));
+  if (unasked !== undefined) throw new TypeError(`'${name}' does not ask for '${unasked}'`);
+  if (call.element !== undefined && !Object.values(plugin.fields ?? {}).some((field) => field.actions?.includes(name))) {
+    throw new TypeError(`'${name}' is offered on no list's elements`);
+  }
   const endpoint = action.endpoint === undefined ? undefined : declarative(plugin, action.endpoint);
   const context = new Context(plugin.hosts ?? [], call, endpoint?.errors ?? []);
+  const subject = { item: call.item, ...(call.element === undefined ? {} : { element: call.element }) };
   return context.run<{ result?: Record<string, unknown>; change?: Change }>(async () => {
-    const called = endpoint && (await answerEndpoint(endpoint, { connections: call.connections, item: call.item }, context));
+    const sent = { params: call.params, connections: call.connections, subject };
+    const called = endpoint && (await answerEndpoint(endpoint, sent, context));
     if (called && !("result" in called)) return called;
-    const read = { item: call.item, held: call.held ?? {}, ...called, now: context.now };
+    const read = { ...subject, held: call.held ?? {}, ...called, params: call.params ?? {}, ...context.installed, now: context.now };
     const change = action.write === undefined ? undefined : await context.value(action.write, read, "write");
-    if (change !== undefined) fitsChange(change, "change", "write");
+    if (change !== undefined) fitsChange(plugin, change, "change", "write");
     return { ...called, ...(change === undefined ? {} : { change: change as Change }) };
   });
 }
 
 /**
  * A declarative schedule's run in one community. Its `params` answer the
- * endpoint's params from `since`, `now` and `connection` (the fields of the
- * connection the endpoint's first request names); the endpoint is rendered and
- * answered with them as {@link runEndpoint} does it; and its `write` answers,
- * from the endpoint's mapped answer as `result` beside `since` and `now`, the
- * changes Initiative makes as the install. `since` is when the schedule last
- * succeeded there, as ISO 8601: null, the default, the first time.
+ * endpoint's params from `since`, `now`, `connection` (the fields of the
+ * connection the endpoint's first request names), `settings` and `aliases`; the
+ * endpoint is rendered and answered with them as {@link runEndpoint} does it;
+ * and its `write` answers, from the endpoint's mapped answer as `result` beside
+ * `since`, `now`, `settings` and `aliases`, the changes Initiative makes as the
+ * install. `since` is when the schedule last succeeded there, as ISO 8601:
+ * null, the default, the first time.
  */
 export async function runSchedule(
   plugin: AnyPlugin,
   name: string,
-  call: Recorded & {
-    since?: string | null;
-    connections?: Record<string, Record<string, unknown>>;
-  }
+  call: Recorded &
+    InstallSettings & {
+      since?: string | null;
+      connections?: Record<string, Record<string, unknown>>;
+    }
 ): Promise<ScheduleRun> {
   const schedule = plugin.schedules?.[name];
   if (!schedule || "run" in schedule) throw new TypeError(`'${name}' is not a declarative schedule of this plug-in`);
@@ -480,15 +534,15 @@ export async function runSchedule(
     const since = call.since ?? null;
     const first = endpoint.steps?.[0].request ?? endpoint.request!;
     const connection = call.connections?.[first.connection ?? ""] ?? {};
-    const params =
-      schedule.params === undefined ? undefined : await context.value(schedule.params, { since, now: context.now, connection }, "params");
+    const read = { since, now: context.now, ...context.installed };
+    const params = schedule.params === undefined ? undefined : await context.value(schedule.params, { ...read, connection }, "params");
     if (params !== undefined && (!params || typeof params !== "object" || Array.isArray(params))) {
       throw new Error(`params answered ${text(params)}, which is not an object of the endpoint's params`);
     }
     const sent = { params: params as Record<string, unknown> | undefined, connections: call.connections };
     const called = await answerEndpoint(endpoint, sent, context);
     if (!("result" in called)) return called;
-    const writes = targeted(await context.value(schedule.write, { result: called.result, since, now: context.now }, "write"), "write");
+    const writes = targeted(plugin, await context.value(schedule.write, { result: called.result, ...read }, "write"), "write");
     return { result: called.result, writes };
   });
 }
@@ -501,13 +555,13 @@ export async function runSchedule(
 export async function runAfterConnect(
   plugin: AnyPlugin,
   connection: string,
-  call: Recorded & { params?: Record<string, string> }
+  call: Recorded & InstallSettings & { params?: Record<string, string> }
 ): Promise<Run<{ values?: Record<string, unknown>; account_label?: string }>> {
   const after = plugin.connections?.[connection]?.flow?.after_connect;
   if (typeof after !== "object") throw new TypeError(`'${connection}' has no declarative after_connect`);
   const context = new Context(plugin.hosts ?? [], call, []);
   return context.run<{ result: { values?: Record<string, unknown>; account_label?: string } } | { refused: string }>(async () => {
-    const base = { params: call.params ?? {}, now: context.now };
+    const base = { params: call.params ?? {}, now: context.now, ...context.installed };
     const steps = after.steps ?? [{ name: "", request: after.request! }];
     const answers: Record<string, Answer> = {};
     let read: object = base;
@@ -533,13 +587,13 @@ export async function runAfterConnect(
 export async function runHealth(
   plugin: AnyPlugin,
   connection: string,
-  call: Recorded & { fields?: Record<string, unknown> }
+  call: Recorded & InstallSettings & { fields?: Record<string, unknown> }
 ): Promise<Run<ConnectionState>> {
   const health = plugin.connections?.[connection]?.health;
   if (!health) throw new TypeError(`'${connection}' declares no health check`);
   const context = new Context(plugin.hosts ?? [], call, null);
   return context.run(async () => {
-    const document = { params: {}, connection: call.fields ?? {}, now: context.now };
+    const document = { params: {}, connection: call.fields ?? {}, now: context.now, ...context.installed };
     const response = await perform(health.request, document, context, "health/request");
     for (const [index, row] of health.states.entries()) {
       if (row.status !== undefined && !matches(row.status, response.status)) continue;
@@ -567,7 +621,7 @@ export interface WebhookRun {
  */
 export async function runWebhook(
   plugin: AnyPlugin,
-  delivery: {
+  delivery: InstallSettings & {
     headers?: Record<string, string>;
     payload: unknown;
     /** The routed connection's non-secret fields. */
@@ -581,6 +635,8 @@ export async function runWebhook(
     payload: delivery.payload,
     connection: delivery.connection ?? {},
     now: new Date(clock).toISOString(),
+    settings: delivery.settings ?? {},
+    aliases: delivery.aliases ?? {},
   };
   const holds = async (expression: string) =>
     (await evaluate("$boolean($)", await evaluate(expression, document, { now: clock }))) === true;
@@ -591,7 +647,7 @@ export async function runWebhook(
       const payload = await evaluate(row.map, document, { now: clock });
       out.event = { emit: row.emit, payload: fits(payload, plugin.endpoints?.[row.emit]?.returns, `the ${row.emit} event`) };
     }
-    if (row.write !== undefined) out.writes = targeted(await evaluate(row.write, document, { now: clock }), "write");
+    if (row.write !== undefined) out.writes = targeted(plugin, await evaluate(row.write, document, { now: clock }), "write");
     break;
   }
   for (const row of plugin.webhooks?.status ?? []) {

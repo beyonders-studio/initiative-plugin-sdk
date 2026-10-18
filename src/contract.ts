@@ -78,6 +78,12 @@ export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "dat
 export type Tone = "accent" | "positive" | "negative" | "warning" | "neutral" | "muted";
 export const TONES: readonly Tone[] = ["accent", "positive", "negative", "warning", "neutral", "muted"];
 
+export type SettingType = "string";
+export const SETTING_TYPES: readonly SettingType[] = ["string"];
+
+export type SettingAssignment = "community_name";
+export const SETTING_ASSIGNMENTS: readonly SettingAssignment[] = ["community_name"];
+
 export type ListingKind = "plugin" | "dashboard";
 export const LISTING_KINDS: readonly ListingKind[] = ["plugin", "dashboard"];
 
@@ -121,6 +127,8 @@ export const CAPS = {
   actions: 16,
   partNodes: 50,
   partDepth: 4,
+  facetsPerField: 4,
+  valuesPerFacet: 12,
   metadataKeyLength: 64,
   metadataValueBytes: 8192,
   metadataLookupLength: 255,
@@ -130,6 +138,9 @@ export const CAPS = {
   installMetadataBytes: 1048576,
   writeTargets: 100,
   partsPlacedPerItem: 3,
+  settings: 16,
+  uniqueSettingValueLength: 16,
+  helpLength: 2000,
   bundledDashboards: 8,
   dashboardWidgets: 50,
   dashboardGridColumns: 12,
@@ -199,6 +210,7 @@ export const CHARSETS = {
   artwork: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-",
   queryName: "-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz~",
   metadataKey: "._0123456789abcdefghijklmnopqrstuvwxyz",
+  uniqueSettingValue: "0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
 
 /**
@@ -219,7 +231,7 @@ export const FIELDS = {
   endpointReturn: ["key", "type", "label", "list", "of"],
   connection: ["id", "scope", "label", "fields", "flow", "token", "access_hint", "health"],
   connectionFlow: ["type", "authorize_url", "token_url", "client_id", "client_secret", "scopes", "pkce", "authorize_params", "install_url", "after_connect", "revoke", "revoke_url"],
-  connectionToken: ["type", "exchange_url", "iss", "key", "alg", "lifetime"],
+  connectionToken: ["type", "exchange_url", "exchange_body", "iss", "key", "alg", "lifetime"],
   webhooks: ["verify", "dedup", "route", "events", "status"],
   webhookVerify: ["scheme", "header", "prefix", "encoding", "secret"],
   webhookRoute: ["path", "header", "connection", "field"],
@@ -227,7 +239,9 @@ export const FIELDS = {
   endpoint: ["id", "label", "description", "returns", "group", "needs_subject", "direction", "params", "actors", "admin_only", "public", "requires", "cache_ttl_seconds", "identity", "unavailable", "request", "steps", "map", "errors"],
   widget: ["id", "meta", "module_source", "endpoints", "sample_data", "requires"],
   page: ["id", "path", "name", "scopes", "admin_only", "capabilities", "requires"],
-  field: ["key", "name", "kind", "on", "description", "tone", "requires"],
+  field: ["key", "name", "kind", "list", "on", "description", "tone", "states", "actions", "requires"],
+  stateFacet: ["name", "values"],
+  stateValue: ["label", "tone"],
   sectionNode: ["type", "props", "children"],
   stackNode: ["type", "props", "children"],
   fieldNode: ["type", "props"],
@@ -235,9 +249,11 @@ export const FIELDS = {
   textNode: ["type", "props"],
   buttonNode: ["type", "props"],
   part: ["id", "name", "on", "tree", "description", "requires"],
-  action: ["id", "name", "endpoint", "write", "on", "confirm", "menu", "admin_only", "requires"],
-  change: ["set"],
-  targetedChange: ["target", "set"],
+  action: ["id", "name", "endpoint", "params", "write", "on", "confirm", "menu", "admin_only", "requires"],
+  change: ["set", "upsert", "remove"],
+  targetedChange: ["target", "set", "upsert", "remove"],
+  listElement: ["ref", "value", "url", "text", "tone", "max", "state"],
+  setting: ["key", "type", "label", "description", "unique", "assigned"],
   bundledDashboard: ["uid", "public_id", "name", "description", "layout", "widgets"],
   bundledDashboardWidget: ["id", "type", "title", "grid", "binding"],
   endpointIdentity: ["kind", "key"],
@@ -254,7 +270,7 @@ export const FIELDS = {
   healthState: ["status", "when", "state"],
   webhookEvent: ["when", "emit", "map", "write"],
   webhookStatus: ["when", "connection", "state"],
-  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "dashboards", "fields", "parts", "actions"],
+  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "dashboards", "fields", "parts", "actions", "settings", "help"],
 } as const;
 
 export type Identifier = string;
@@ -616,6 +632,13 @@ export interface ConnectionToken {
    */
   exchange_url: string;
   /**
+   * A JSON body posted with the signed JWT, such as the narrower permissions a
+   * token is asked for. Absent: none. A string anywhere in it may name a vendor
+   * value as '{vendor.<key>}' and one of this connection's own fields as
+   * '{<key>}'.
+   */
+  exchange_body?: Record<string, unknown>;
+  /**
    * The JWT's issuer, normally '{vendor.app_id}'. May name a vendor value as
    * '{vendor.<key>}' and one of this connection's own fields as '{<key>}'.
    */
@@ -743,15 +766,17 @@ export interface Schedule {
   /**
    * Declarative plug-ins: the endpoint's params, as one expression answering an
    * object. It reads 'since', when the schedule last succeeded in the community
-   * (ISO 8601), or null the first time; 'now'; and 'connection', the non-secret
-   * fields of the connection the endpoint's first request names. Absent: none.
+   * (ISO 8601), or null the first time; 'now'; 'connection', the non-secret
+   * fields of the connection the endpoint's first request names; 'settings' and
+   * 'aliases'. Absent: none.
    */
   params?: Expression;
   /**
    * Declarative plug-ins: the changes Initiative makes to the plug-in's values
    * from the endpoint's answer, as the install: a list of at most 100 targeted
    * changes ('targetedChange'). It reads 'result', the endpoint's mapped
-   * answer, 'since' and 'now'. Answering nothing changes nothing.
+   * answer, 'since', 'now', 'settings' and 'aliases'. Answering nothing changes
+   * nothing.
    */
   write?: Expression;
 }
@@ -764,11 +789,12 @@ export type NamespacedId = string;
 
 /**
  * 'plugins:<public_id>': permission to call another plug-in's public endpoints
- * through the deployment, as this community or as one of its members. Not one
- * of the fixed scopes: the family is open, one per plug-in, and the public id
- * after the prefix is the plug-in being called. The deployment never lets a
- * plug-in address another directly; the call goes through it, and the plug-in
- * called is handed its own references for whoever the call is for.
+ * through the deployment, as this community or as one of its members, and to
+ * read the values that plug-in shows on items this one can read. Not one of the
+ * fixed scopes: the family is open, one per plug-in, and the public id after
+ * the prefix is the plug-in being called. The deployment never lets a plug-in
+ * address another directly; the call goes through it, and the plug-in called is
+ * handed its own references for whoever the call is for.
  */
 export type PluginScope = `plugins:${string}`;
 
@@ -944,9 +970,10 @@ export type MetadataKey = string;
  * exports with no call to the plug-in. Which views show it is chosen by the
  * community's managers, never by the plug-in. Initiative holds what is kept,
  * and these caps are enforced there rather than here: a value of at most 8192
- * bytes as JSON, with a string of at most 255 characters to be found by; at
- * most 32 keys and 65536 bytes on one item, and 256 keys and 1048576 bytes on
- * the install.
+ * bytes as JSON, with a string of at most 255 characters to be found by, and
+ * each element of a list a value of its own, found by its 'ref'; at most 32
+ * keys and 65536 bytes on one item, and 256 keys and 1048576 bytes on the
+ * install.
  */
 export interface Field {
   /**
@@ -966,6 +993,14 @@ export interface Field {
    */
   kind: FieldKind;
   /**
+   * Several values rather than one: the value is a list of elements, each one
+   * value of 'kind' with a 'ref' that tells it from the others ('listElement').
+   * A change gives the whole list in 'set', or adds, replaces and removes
+   * elements by 'ref' with 'upsert' and 'remove'. Absent: one value, which a
+   * change sets.
+   */
+  list?: boolean;
+  /**
    * The item kinds it is offered on.
    */
   on: ItemKind[];
@@ -977,7 +1012,47 @@ export interface Field {
    * A badge's tone when its value names none.
    */
   tone?: Tone;
+  /**
+   * What state the value is in, as facets by id, at most 4, each with keys of
+   * its own. The value names a key of each facet it is in as 'state',
+   * {"<facet>": "<key>"}, and Initiative draws each as a badge, labelled in the
+   * reader's language. A list element, and a link, badge or progress value,
+   * carries 'state' beside its other properties; a text, number, date, datetime
+   * or checkbox value that carries one is written as an element is, without the
+   * 'ref': {"value": …, "state": …}.
+   */
+  states?: Record<string, StateFacet>;
+  /**
+   * Declarative plug-ins, on a list field: actions offered on each of its
+   * elements, by id, each one offered on every item kind this field is. An
+   * action run from an element reads that element's 'ref' as 'element'.
+   */
+  actions?: Identifier[];
   requires?: Requires;
+}
+
+/**
+ * One facet of a field's state, such as whether a piece of work is open or what
+ * review it has: its name, and the keys a value may name.
+ */
+export interface StateFacet {
+  /**
+   * What the facet is called.
+   */
+  name: LocalizedText;
+  /**
+   * The keys a value may name, at most 12, each with its badge's words and
+   * tone.
+   */
+  values: Record<string, StateValue>;
+}
+
+/**
+ * One key of a state facet, as its badge shows it.
+ */
+export interface StateValue {
+  label: LocalizedText;
+  tone?: Tone;
 }
 
 /**
@@ -1060,6 +1135,11 @@ export interface ValueNode {
 export interface TextNode {
   type: "text";
   props: {
+    /**
+     * May name '{item.id}', the item's id, and '{settings.<key>}', one of this
+     * plug-in's settings, which Initiative fills in when it draws the part. Any
+     * other '{…}' is refused.
+     */
     text: LocalizedText;
     tone?: Tone;
   };
@@ -1113,16 +1193,19 @@ export interface Part {
 }
 
 /**
- * Something a reader runs on one item, from a part's button or the item's own
- * menu. For a container plug-in, Initiative only connects: it calls the write
- * endpoint as the installation, with the reader as 'viewer' and the item as
+ * Something a reader runs on one item, from a part's button, the item's own
+ * menu, or an element of a list field that offers it. Initiative first asks the
+ * reader for the 'params' the action names, when it names any. For a container
+ * plug-in, Initiative only connects: it calls the write endpoint as the
+ * installation, with those parameters, the reader as 'viewer' and the item as
  * 'subject' in the call's token, and the endpoint does the work, usually
  * writing the plug-in's metadata. For a declarative plug-in, Initiative does
- * the work: it makes the endpoint's call, when the action names one, on the
- * credential its 'actors' say, its expressions reading the item as 'item'; then
- * it makes the change 'write' answers, when the action has one, to the
- * plug-in's values on the item, as the install. Either way Initiative then
- * answers the reader with the item's metadata as it stands.
+ * the work: it makes the endpoint's call, when the action names one, with those
+ * parameters, on the credential its 'actors' say, its expressions reading the
+ * item as 'item' and the element it was run from, if any, as 'element'; then it
+ * makes the change 'write' answers, when the action has one, to the plug-in's
+ * values on the item, as the install. Either way Initiative then answers the
+ * reader with the item's metadata as it stands.
  */
 export interface Action {
   /**
@@ -1141,11 +1224,21 @@ export interface Action {
    */
   endpoint?: NamespacedId;
   /**
+   * Parameters of the action's endpoint, by key, that Initiative asks the
+   * reader for before it runs the action, in a form drawn from the endpoint's
+   * own declarations of them: each one's type and label, and its 'options' or
+   * 'options_from'. The endpoint is sent these and nothing else, so every
+   * parameter it requires is among them.
+   */
+  params?: Identifier[];
+  /**
    * Declarative plug-ins: the change Initiative makes to the plug-in's values
    * on the action's item, as the install: one change ('change'). It reads
    * 'item', the item ({kind, id, title}); 'held', this install's values on it,
    * by key; 'result', the endpoint's mapped answer, absent when the action
-   * names no endpoint; and 'now'. Answering nothing changes nothing.
+   * names no endpoint; 'params', what the reader answered; 'element', the 'ref'
+   * of the list element it was run from, absent when it was not; 'settings',
+   * 'aliases' and 'now'. Answering nothing changes nothing.
    */
   write?: Expression;
   /**
@@ -1171,16 +1264,29 @@ export interface Action {
 
 /**
  * A change to the plug-in's values on one item or on its install, as a
- * declarative plug-in's 'write' answers it: the shape of a container's
- * client.metadata.set. Initiative makes it as the install, and holds what is
- * kept to the caps a field's description gives.
+ * declarative plug-in's 'write' answers it. 'set' writes values by key, as a
+ * container's client.metadata.set does; 'upsert' and 'remove' change a list
+ * field's elements by their 'ref'. A change gives at least one of the three,
+ * and changes each key with only one. Initiative makes it as the install, and
+ * holds what is kept to the caps a field's description gives.
  */
 export interface Change {
   /**
    * Values by metadata key, each any JSON value of at most 8192 bytes; a null
-   * removes its key.
+   * removes its key. A list field's value is its whole list of elements, each
+   * held to that cap.
    */
-  set: Record<string, unknown>;
+  set?: Record<string, unknown>;
+  /**
+   * Elements by metadata key ('listElement'): each is added to that key's list,
+   * or replaces the element there with its 'ref'.
+   */
+  upsert?: Record<string, ListElement[]>;
+  /**
+   * Refs by metadata key: the element with each is taken from that key's list.
+   * A ref the list does not hold changes nothing.
+   */
+  remove?: Record<string, ElementRef[]>;
 }
 
 /**
@@ -1193,14 +1299,25 @@ export interface TargetedChange {
   /**
    * As a change's: values by metadata key, a null removing its key.
    */
-  set: Record<string, unknown>;
+  set?: Record<string, unknown>;
+  /**
+   * As a change's: elements by metadata key, each added to its list or
+   * replacing the one with its 'ref'.
+   */
+  upsert?: Record<string, ListElement[]>;
+  /**
+   * As a change's: refs by metadata key, each element with one taken from its
+   * list.
+   */
+  remove?: Record<string, ElementRef[]>;
 }
 
 /**
  * Where a change is made: {kind, id}, one item; {install: true}, the install
  * itself; or {holding: {key, value}}, every item on which this install holds
- * 'value' under 'key', as a container's client.metadata.find finds them. A
- * target the install cannot read is skipped.
+ * 'value' under 'key', as a container's client.metadata.find finds them.
+ * Initiative keeps each element of a list as a value of its own, so 'holding'
+ * reaches an element by its 'ref'. A target the install cannot read is skipped.
  */
 export type ChangeTarget = {
   kind: ItemKind;
@@ -1212,11 +1329,97 @@ export type ChangeTarget = {
     key: MetadataKey;
     /**
      * A value is found by its text: a string as it is, a number or a boolean as
-     * JSON writes it.
+     * JSON writes it; a list element by its 'ref'.
      */
     value: string;
   };
 };
+
+/**
+ * One element of a list field's value: one value of the field's 'kind', with a
+ * 'ref' that tells it from the list's others. A text, number, date, datetime or
+ * checkbox element holds its value in 'value'; a link element is {ref, url,
+ * text?}, a badge element {ref, text, tone?} and a progress element {ref,
+ * value, max}. Initiative keeps each element as a value of its own, of at most
+ * 8192 bytes as JSON.
+ */
+export interface ListElement {
+  ref: ElementRef;
+  /**
+   * A text, number, date, datetime or checkbox element's value, or a progress
+   * element's figure.
+   */
+  value?: string | number | boolean;
+  /**
+   * A link element's address.
+   */
+  url?: string;
+  /**
+   * A link element's words, or a badge element's.
+   */
+  text?: string;
+  /**
+   * A badge element's tone.
+   */
+  tone?: Tone;
+  /**
+   * A progress element's whole.
+   */
+  max?: number;
+  /**
+   * A key of each of the field's state facets this element is in, by facet id.
+   */
+  state?: Record<string, Identifier>;
+}
+
+/**
+ * What tells a list's element from the others, such as the vendor's own id for
+ * what it shows: unique in its list, and how a change replaces or removes the
+ * element and a 'holding' target finds it.
+ */
+export type ElementRef = string;
+
+/**
+ * A value the community's admins see and may change on the install, which the
+ * plug-in's expressions read as 'settings.<key>' and its parts' text names as
+ * '{settings.<key>}'.
+ */
+export interface Setting {
+  /**
+   * Unique among this manifest's settings.
+   */
+  key: Identifier;
+  /**
+   * What the value is: 'string', a line of text.
+   */
+  type: SettingType;
+  label: LocalizedText;
+  /**
+   * A line under the label.
+   */
+  description?: LocalizedText;
+  /**
+   * No two communities on a deployment hold the same value for this plug-in,
+   * and the value is a 'uniqueSettingValue'. An admin who renames it keeps the
+   * earlier values, which no other community may take and the plug-in's
+   * expressions read as 'aliases.<key>'.
+   */
+  unique?: boolean;
+  /**
+   * A unique setting's only: Initiative gives it a value when the community
+   * installs the plug-in, which an admin may rename. 'community_name': the
+   * letters and digits of the community's name, in lowercase, with a short
+   * random suffix when another community holds that value.
+   */
+  assigned?: SettingAssignment;
+}
+
+/**
+ * A unique setting's value: a lowercase letter, then lowercase letters and
+ * digits, two to 16 characters in all. It holds no '-', so a reference such as
+ * '<value>-<number>' reads one way.
+ */
+export type UniqueSettingValue = string;
 
 export interface BundledDashboard {
   /**
@@ -1296,11 +1499,14 @@ export interface EndpointIdentity {
  * its id, holding the same fields; 'now', the time of the call in ISO 8601,
  * which $now() and $millis() also answer; 'steps', each earlier step's answer
  * by its name; and, on the call an action makes, 'item', the item it runs on:
- * {kind, id, title}. On the way back it also holds 'response', the answer being
- * read: {status, headers, body}, with header names in lowercase. Each
- * evaluation is bounded: at most 1000 milliseconds, 500 levels of nesting and
- * an answer of 1048576 bytes as JSON. An expression that fails or passes a
- * bound answers 'unavailable: mapping-failed'.
+ * {kind, id, title}, and 'element', the 'ref' of the list element it was run
+ * from, if it was. On the way back it also holds 'response', the answer being
+ * read: {status, headers, body}, with header names in lowercase. Every
+ * expression of a declarative plug-in also reads 'settings', the install's
+ * settings by key, and 'aliases', each unique setting's earlier values by key,
+ * as a list. Each evaluation is bounded: at most 1000 milliseconds, 500 levels
+ * of nesting and an answer of 1048576 bytes as JSON. An expression that fails
+ * or passes a bound answers 'unavailable: mapping-failed'.
  */
 export type Expression = string;
 
@@ -1562,8 +1768,8 @@ export interface HealthState {
  * What one kind of delivery does: emit an event, change the plug-in's values,
  * or both. It gives 'emit', 'write' or both, and 'map' exactly when it gives
  * 'emit'. Its expressions read 'headers' (names in lowercase), 'payload' (the
- * parsed body), 'connection' (the routed connection's non-secret fields) and
- * 'now'.
+ * parsed body), 'connection' (the routed connection's non-secret fields),
+ * 'now', 'settings' and 'aliases'.
  */
 export interface WebhookEvent {
   /**
@@ -1623,10 +1829,11 @@ export interface WebhookStatus {
  * and token to its scope and fields, what a webhooks block names, what a vendor
  * setup writes to, whether every expression parses, what a declarative request
  * and its steps name, the bounds, ids and endpoints of schedules, which terms
- * each kind's schedules, actions and webhook events take, the unique keys and
- * ids of fields, parts and actions, what a part's nodes and an action name, and
- * a part's size and depth are enforced by the platform on publish and are not
- * expressible here.
+ * each kind's schedules, actions, fields and webhook events take, the unique
+ * keys and ids of fields, parts, actions and settings, what a part's nodes, a
+ * field's element actions and an action's endpoint and params name, the
+ * placeholders in a part's text, and a part's size and depth are enforced by
+ * the platform on publish and are not expressible here.
  */
 export interface Manifest {
   /**
@@ -1648,12 +1855,20 @@ export interface Manifest {
     /**
      * The scopes this plug-in asks a community to grant: what its installation
      * and member tokens act with. The fixed scopes, and 'plugins:<public_id>'
-     * for each plug-in this one calls (at most 24 of those). The community
-     * grants some or all of them when it installs the plug-in, and a token
-     * never carries more than was granted. Writing implies reading. Absent
-     * means none.
+     * for each plug-in this one uses, to call its public endpoints and read the
+     * values it shows on items (at most 24 of those). The community grants some
+     * or all of them when it installs the plug-in, and a token never carries
+     * more than was granted. Writing implies reading. Absent means none.
      */
     scopes?: Array<Scope | PluginScope>;
+    /**
+     * This plug-in may act through any plug-in the community lets it use, not
+     * only those its scopes name as 'plugins:<public_id>'. When a community
+     * installs another plug-in, it is asked there whether this one may use it,
+     * which grants 'plugins:<public_id>' for it. Absent: only the plug-ins its
+     * scopes name.
+     */
+    calls_plugins?: boolean;
   };
   /**
    * What this plug-in contributes. Cross-checked against the blocks present in
@@ -1746,4 +1961,16 @@ export interface Manifest {
    * its values, which Initiative makes.
    */
   actions?: Action[];
+  /**
+   * Values the community's admins set on the install, which the plug-in's
+   * expressions and its parts' text read. At most 16.
+   */
+  settings?: Setting[];
+  /**
+   * Help with the plug-in, keyed by language tag: markdown of at most 2000
+   * characters in each language. Initiative shows it behind a '?' on the
+   * headers of the plug-in's parts and on its settings, in the reader's
+   * language, or failing that in any.
+   */
+  help?: Record<string, string>;
 }

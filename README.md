@@ -82,8 +82,9 @@ export default definePlugin({
   [`manifest.contract.json`](manifest.contract.json): `vendor`, `connections`
   (keyed by id), `webhooks`, `pages` (keyed by id),
   `dashboards`, `fields` (keyed by metadata key), `parts` and `actions` (keyed
-  by id). The types are generated from the contract, so every term the
-  contract declares has a type here.
+  by id), `settings` (keyed by setting key) and `help`. The types are
+  generated from the contract, so every term the contract declares has a type
+  here.
 - **Features follow from what is filled in.** A plug-in with widgets declares
   `widgets`, and so on.
 
@@ -283,6 +284,28 @@ vendor: {
   key must be a vendor field, each answer is written at most once, and
   `client_secret`, `pem` and `webhook_secret` go to `secret` fields.
 
+### A token minted on demand
+
+A static connection's `token` has Initiative mint its access token rather than
+store one: it signs a JWT with a vendor key, posts it to the vendor's
+`exchange_url`, and caches the answer until shortly before it expires.
+`exchange_body` is a JSON body posted with it, such as the narrower
+permissions a token is asked for:
+
+```ts
+token: {
+  type: "jwt_bearer",
+  exchange_url: "https://api.tracker.example/installations/{installation_id}/tokens",
+  exchange_body: { permissions: { issues: "write", contents: "read" } },
+  iss: "{vendor.app_id}",
+  key: "{vendor.private_key}",
+},
+```
+
+`exchange_url`, `iss` and every string in `exchange_body` may name a vendor
+value as `{vendor.<key>}` and one of the connection's own fields as `{<key>}`;
+`validateManifest` refuses a name that neither declares.
+
 ### Pages
 
 A page is one of your plug-in's screens, framed by Initiative:
@@ -374,18 +397,64 @@ fields: {
 editor's Add picker shows; `tone` is a badge's tone when its value names none
 (`accent`, `positive`, `negative`, `warning`, `neutral`, `muted`).
 
-**An action** runs on one item, from a part's button, or from the item's own
-menu with `menu: true`. A container plug-in's action names one of its write
-endpoints: Initiative calls it as the installation, with `viewer` and `subject`
-set, and the handler does the work, usually writing metadata. A declarative
-plug-in's names an endpoint, a `write`, or both, and Initiative does the work
-itself. Either way Initiative then answers the reader with the item's metadata
-as it stands. With `confirm`, Initiative asks first; with `admin_only: true`,
-only the community's admins may run it.
+**A list field**, `list: true`, holds several values: its value is a list of
+elements, each one value of the field's `kind` with a `ref` of 1 to 255
+characters that tells it from the others. A `text`, `number`, `date`,
+`datetime` or `checkbox` element is `{ ref, value }`; a `link`, `badge` or
+`progress` element is the kind's own object with its `ref`, such as
+`{ ref, url, text? }`. Initiative keeps each element as a value of its own,
+held to the size of one value, and finds an element by its `ref`.
+
+**States** say what state a value is in, in the plug-in's own words: up to 4
+facets, each with up to 12 keys. A value names a key of each facet it is in as
+`state`, and Initiative draws one badge per facet, labelled in the reader's
+language. A list element, and a `link`, `badge` or `progress` value, carries
+`state` beside its other properties; a `text`, `number`, `date`, `datetime` or
+`checkbox` value that carries one is written as an element is, without the
+`ref`: `{ value, state }`.
+
+```ts
+fields: {
+  "tracker.issues": {
+    name: { en: "Issues" },
+    kind: "link",
+    list: true,
+    on: ["task"],
+    states: {
+      status: {
+        name: { en: "Status" },
+        values: { open: { label: { en: "Open" }, tone: "positive" }, closed: { label: { en: "Closed" }, tone: "muted" } },
+      },
+    },
+    actions: ["unlink"],
+  },
+},
+// an element: { ref: "12", url: "https://tracker.example/issues/12", text: "#12", state: { status: "open" } }
+```
+
+A list field's `actions` are offered on each of its elements, and each is
+offered on every item kind the field is. They are a declarative plug-in's: an
+action run from an element reads the element's `ref` as `element`, and a
+container's handler is told the item alone.
+
+**An action** runs on one item, from a part's button, from the item's own menu
+with `menu: true`, or from an element of a list field that offers it. A
+container plug-in's action names one of its write endpoints: Initiative calls
+it as the installation, with `viewer` and `subject` set, and the handler does
+the work, usually writing metadata. A declarative plug-in's names an endpoint,
+a `write`, or both, and Initiative does the work itself. Either way Initiative
+then answers the reader with the item's metadata as it stands. With `confirm`,
+Initiative asks first; with `admin_only: true`, only the community's admins may
+run it.
+
+`params` names the endpoint's params Initiative asks the reader for before it
+runs the action, in a form drawn from their own declarations: each one's type,
+label, and `options` or `options_from`. The endpoint is sent the reader's
+answers and nothing else, so every param it requires is among them.
 
 ```ts
 actions: {
-  "new-link": { name: { en: "New link" }, endpoint: "create-link", on: ["task"], menu: true },
+  "new-link": { name: { en: "New link" }, endpoint: "create-link", params: ["url"], on: ["task"], menu: true },
 },
 ```
 
@@ -403,8 +472,11 @@ plug-in's parts on one item.
 | `button` | `action`: an action's id; `variant?` (`primary`, `secondary`, `ghost`) | no |
 
 Every field and action a part names must be offered on each kind in the
-part's `on`. A tree is plain data, `{ type, props?, children? }`, or JSX through
-the SDK's runtime, which the build turns into the same data:
+part's `on`. A `text` node's text may name `{item.id}`, the item's id, and
+`{settings.<key>}`, one of the plug-in's [settings](#settings-and-help), which
+Initiative fills in when it draws the part; `validateManifest` refuses any
+other `{…}`. A tree is plain data, `{ type, props?, children? }`, or JSX
+through the SDK's runtime, which the build turns into the same data:
 
 ```tsx
 /** @jsxImportSource initiative-plugin-sdk */
@@ -433,6 +505,37 @@ The pragma, or `"jsx": "react-jsx"` and `"jsxImportSource":
 children join the node that holds it, and `null` and `false` children are left
 out. `key` is JSX's own and is not passed on, which is why a field is named by
 `field`.
+
+### Settings and help
+
+**Settings** are values the community's admins see and may change on the
+install, keyed by setting key, at most 16. A part's text names one as
+`{settings.<key>}`, and a declarative plug-in's expressions read them as
+`settings.<key>`.
+
+```ts
+settings: {
+  prefix: { type: "string", label: { en: "Reference prefix" }, unique: true, assigned: "community_name" },
+},
+```
+
+A `unique` setting's value is held by no other community on the deployment for
+this plug-in, and is a lowercase letter, then lowercase letters and digits, 2
+to 16 characters in all (`^[a-z][a-z0-9]{1,15}$`), so a reference such as
+`acme-7` reads one way. With `assigned: "community_name"`, Initiative gives it a
+value when the community installs the plug-in: the letters and digits of the
+community's name, in lowercase, with a short random suffix when another
+community holds that value. An admin may rename it. The earlier values stay the
+community's, and expressions read them as `aliases.<key>`, so a reference made
+under one still resolves.
+
+**Help** is markdown, by language tag, at most 2000 characters in each.
+Initiative shows it behind a "?" on the headers of the plug-in's parts and on
+its settings:
+
+```ts
+help: { en: "Links issues to tasks. Name a task's reference, such as **acme-7**, in an issue's title to link it." },
+```
 
 ## 2. Widgets
 
@@ -604,7 +707,11 @@ listingUid: plugin.uid })`, which reads billing's key from
   path after `/c/{community}`) by hand, with the same scope check.
 - `client.callPlugin(publicId, endpointId, params)` calls another plug-in's public
   endpoint through Initiative. It needs `plugins:<publicId>` among the plug-in's
-  scopes, granted by the community.
+  scopes, granted by the community. A plug-in that uses whichever plug-ins a
+  community lets it sets `callsPlugins: true` (the manifest's
+  `service.calls_plugins`) instead of naming each: a community that installs
+  another plug-in is asked there whether this one may use it, which grants the
+  scope.
 - `client.metadata`, the plug-in's metadata, always on the installation's
   token: `get(itemKind, ids)` answers each item's values by id;
   `set(itemKind, id, values)` writes some of one item's values, a null
@@ -828,8 +935,10 @@ it("lists a repository's open issues", async () => {
   `connection` (the non-secret fields of the connection its request names),
   `connections` (on an endpoint, each connection its `requires` names that the
   call has, by id: `connections.workspace.owner`), `now`, and once a call has
-  been answered `response` (`status`, `headers`, `body`). `build` parses
-  every one and fails with its place in the manifest when one does not parse.
+  been answered `response` (`status`, `headers`, `body`). Every expression
+  also reads `settings`, the install's [settings](#settings-and-help) by key,
+  and `aliases`, each unique setting's earlier values. `build` parses every
+  one and fails with its place in the manifest when one does not parse.
 - **Each evaluation is bounded** by the contract's `CAPS.expressionTimeMs`,
   `CAPS.expressionDepth` and `CAPS.expressionOutputBytes`; past one, or on an
   error, the call answers `unavailable: mapping-failed`. `evaluate` from
@@ -866,31 +975,40 @@ it("lists a repository's open issues", async () => {
   its values only on items those scopes read, such as tasks with
   `projects:read`.
 - **Values** are written from a `write` expression: Initiative makes the
-  changes it answers, as the install. A **change** is `{"set": {"<key>": <value>}}`, the
-  shape of `client.metadata.set`: a null removes its key, and every value is
-  held to the metadata caps. A **targeted change** adds its `target`:
+  changes it answers, as the install. A **change** sets values by key,
+  `{"set": {"<key>": <value>}}`, the shape of `client.metadata.set`: a null
+  removes its key, and every value is held to the metadata caps. A list
+  field's value is its whole list of elements; its elements change by their
+  `ref` with `{"upsert": {"<key>": [<element>]}}`, which adds each element or
+  replaces the one with its `ref`, and `{"remove": {"<key>": ["<ref>"]}}`. A
+  change gives at least one of `set`, `upsert` and `remove`, and changes each
+  key with only one. A **targeted change** adds its `target`:
   `{"kind": "task", "id": 7}` for one item, `{"install": true}` for the
   install, or `{"holding": {"key": "<key>", "value": "<text>"}}` for every item
   on which the install holds that value under that key (a number or a boolean
-  as JSON writes it). A target the install cannot read is skipped, one `write`
-  answers at most 100 targeted changes (`CAPS.writeTargets`), and a `write`
-  answering nothing changes nothing.
+  as JSON writes it, a list element by its `ref`). A target the install cannot
+  read is skipped, one `write` answers at most 100 targeted changes
+  (`CAPS.writeTargets`), and a `write` answering nothing changes nothing.
   - An **event** row's `write`, beside its `emit` and `map` or in their place,
-    answers targeted changes from `headers`, `payload`, `connection` and
-    `now`. The first row whose `when` holds applies, its emission and its
-    write both.
-  - An **action** names an `endpoint`, a `write`, or both. The endpoint may
-    be a read, fetching what the `write` keeps, or a write that changes
-    something at the vendor. Initiative makes the endpoint's call on the credential its `actors` say, its
-    expressions also reading `item` (`{kind, id, title}`), then the one change
-    `write` answers from `item`, `held` (the install's values on the item),
-    `result` (the endpoint's mapped answer) and `now`.
+    answers targeted changes from `headers`, `payload`, `connection`, `now`,
+    `settings` and `aliases`. The first row whose `when` holds applies, its
+    emission and its write both.
+  - An **action** names an `endpoint`, a `write`, or both. The endpoint may be
+    a read, fetching what the `write` keeps, or a write that changes something
+    at the vendor. Initiative makes the endpoint's call with the `params` the
+    reader answered, on the credential its `actors` say, its expressions also
+    reading `item` (`{kind, id, title}`) and `element` (the `ref` of the list
+    element it was run from, if any), then the one change `write` answers from
+    `item`, `held` (the install's values on the item), `result` (the
+    endpoint's mapped answer), `params`, `element`, `settings`, `aliases` and
+    `now`.
   - A **schedule** makes a read as the installation on an interval: `endpoint`
     names a read endpoint whose `actors` include `installation`, `params`
     answers its params from `since` (when the schedule last succeeded, or
-    null), `now` and `connection`, and `write` answers targeted changes from
-    `result`, `since` and `now`. Its id is none of the plug-in's connections':
-    Initiative keys connection health checks by connection id.
+    null), `now`, `connection`, `settings` and `aliases`, and `write` answers
+    targeted changes from `result`, `since`, `now`, `settings` and `aliases`.
+    Its id is none of the plug-in's connections': Initiative keys connection
+    health checks by connection id.
 
   ```ts
   schedules: {
@@ -909,6 +1027,14 @@ it("lists a repository's open issues", async () => {
       on: ["task"],
       write: '{"set": {"issue.number": result.number, "issue.link": {"url": result.url, "text": "#" & result.number}}}',
     },
+    link: {
+      name: { en: "Link an issue" },
+      endpoint: "link-issue", // takes number: int; returns number: int, url: string, state: string
+      params: ["number"],
+      on: ["task"],
+      write: '{"upsert": {"issues.linked": [{"ref": $string(result.number), "url": result.url, "state": {"status": result.state}}]}}',
+    },
+    unlink: { name: { en: "Unlink" }, on: ["task"], write: '{"remove": {"issues.linked": [element]}}' }, // a list field's element action
   },
   ```
 
@@ -927,13 +1053,16 @@ render each request as Initiative sends it, less the credential, answer it from
 the recorded `responses` in order, and return the requests beside the result or
 the code the run answered. `runEndpoint` takes each connection's fields by id
 in `connections`; it has no actor, so it does not refuse a call the way
-Initiative would for who is making it. `runAction` takes the `item` and what
-the install `held` on it, and answers the endpoint's `result` and the
-`change`; `runSchedule` takes `since`, and answers the endpoint's `result` and
-the `writes`; `runWebhook` answers a delivery's `event`, `writes` and `status`.
-A run fails when a request has no recorded answer left, when an answer is left
-over, when the map's answer does not fit the declared returns, or when a
-`write` answers what is not a change.
+Initiative would for who is making it. `runAction` takes the `item`, what the
+install `held` on it, the `params` the reader answered and the `element` it was
+run from, and answers the endpoint's `result` and the `change`; `runSchedule`
+takes `since`, and answers the endpoint's `result` and the `writes`;
+`runWebhook` answers a delivery's `event`, `writes` and `status`. Every runner
+takes the install's `settings` and `aliases`. A run fails when a request has no
+recorded answer left, when an answer is left over, when the map's answer does
+not fit the declared returns, or when a `write` answers what is not a change:
+one that changes a key twice, gives a list field anything but a list of
+elements, or upserts or removes elements of a field that is not a list.
 
 ## A private plug-in
 
@@ -991,9 +1120,10 @@ npx initiative-plugin schema                   # the JSON Schema it checks again
 `validateManifest` runs the bundled JSON Schema, then the checks a schema
 cannot express: features against the blocks present, ids that must name
 something the manifest declares, connection, vendor setup and schedule rules,
-what a part's nodes and an action name, a part's size and depth,
-and every term the contract does not declare (a deployment discards those
-without saying so). The deployment also enforces byte-size caps.
+what a part's nodes, a list field's element actions and an action's `params`
+name, the placeholders in a part's text, a part's size and depth, and every
+term the contract does not declare (a deployment discards those without saying
+so). The deployment also enforces byte-size caps.
 
 ## The contract
 
@@ -1075,11 +1205,14 @@ either the file's version or the client is stale.
 | `initiatives:read` | The initiatives the plug-in is placed in. |
 | `initiatives:moderate` | Acting as a moderator in an initiative it is placed in: everything there, within the plug-in's other scopes. Only on a token that asks for it (`level=moderator`) and is narrowed to that initiative. |
 | `community:admin` | Acting with a community admin's standing across the community, within the plug-in's other scopes. Only on a token that asks for it (`level=community_admin`) and is not narrowed to an initiative. |
-| `plugins:<public id>` | Calling that plug-in's public endpoints through Initiative. One per plug-in. |
+| `plugins:<public id>` | Calling that plug-in's public endpoints through Initiative, and reading the values it shows on items the plug-in can read. One per plug-in. |
 
 A container plug-in's `scopes` go in its manifest's `service` block. A
 declarative plug-in asks for read scopes alone, at the manifest's top level: it
 keeps its own values on items those scopes read, and does not call Initiative.
+A container plug-in with `callsPlugins: true` needs no `plugins:` scope in its
+manifest: a community that installs another plug-in is asked there whether
+this one may use it, and that grants `plugins:<public id>` for it.
 
 Writing implies reading. Within its scopes a plug-in still sees only what is open
 to the initiative, shared with the plug-in, or created by it — unless a token asks

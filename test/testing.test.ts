@@ -188,6 +188,12 @@ describe("runHealth", () => {
 
 describe("runWebhook", () => {
   const closed = { headers: { "X-Event": "issues" }, payload: { action: "closed", issue: { number: 7 } } };
+  /** The delivery `closed` matches, written by `write`. */
+  const writing = (write: string) => {
+    const changed = issuesPlugin();
+    changed.webhooks!.events![1].write = write;
+    return runWebhook(changed, closed);
+  };
 
   it("emits the first matching row's event and makes its writes, and sets a connection's state", async () => {
     expect(
@@ -208,22 +214,56 @@ describe("runWebhook", () => {
     expect(await runWebhook(plugin, { headers: { "X-Event": "push" }, payload: {} })).toEqual({});
   });
 
+  it("reads the install's settings and a unique setting's earlier values", async () => {
+    const issue = { number: 12, title: "Fix ACME-7 and old-9, not other-3", html_url: "https://tracker.example/acme/issues/12" };
+    const run = await runWebhook(plugin, {
+      headers: { "X-Event": "issues" },
+      payload: { action: "opened", issue },
+      settings: { prefix: "acme" },
+      aliases: { prefix: ["old"] },
+    });
+    const linked = [{ ref: "12", url: issue.html_url, text: "#12", state: { status: "open" } }];
+    expect(run.writes).toEqual([
+      { target: { install: true }, set: { "issues.last_opened": 12 } },
+      { target: { kind: "task", id: 7 }, upsert: { "issues.linked": linked } },
+      { target: { kind: "task", id: 9 }, upsert: { "issues.linked": linked } },
+    ]);
+  });
+
   it("fails on a write that is not a list of targeted changes within the caps", async () => {
-    const writing = (write: string) => {
-      const changed = issuesPlugin();
-      changed.webhooks!.events![1].write = write;
-      return runWebhook(changed, closed);
-    };
     await expect(writing('{"target": {"install": true}, "set": {}}')).rejects.toThrow("wrap the answer in [ ] to keep a list");
     await expect(writing('[{"target": {"kind": "task"}, "set": {}}]')).rejects.toThrow(
       'write/0 answered {"target":{"kind":"task"},"set":{}}, which is not a targeted change: /target must have required property \'id\''
     );
     await expect(writing('[{"target": {"install": true}, "set": {"Issue": 1}}]')).rejects.toThrow("/set property name must be valid");
     await expect(writing(`[{"target": {"install": true}, "set": {"big": $pad("", ${CAPS.metadataValueBytes}, "x")}}]`)).rejects.toThrow(
-      `write/0 sets 'big' to more than ${CAPS.metadataValueBytes} bytes as JSON`
+      `write/0 gives 'big' a value of more than ${CAPS.metadataValueBytes} bytes as JSON`
     );
     await expect(writing(`[1..${CAPS.writeTargets + 1}].{"target": {"install": true}, "set": {}}`)).rejects.toThrow(
       `write answered ${CAPS.writeTargets + 1} changes, more than ${CAPS.writeTargets}`
+    );
+  });
+
+  it("fails on a change that changes nothing or one key twice, or on a list's elements that are not elements within the caps", async () => {
+    const changing = (...operations: string[]) => writing(`[{${['"target": {"install": true}', ...operations].join(", ")}}]`);
+    await expect(changing()).rejects.toThrow("/ must match a schema in anyOf");
+    await expect(changing('"upsert": {"issues.linked": [{"url": "u"}]}')).rejects.toThrow(
+      "/upsert/issues.linked/0 must have required property 'ref'"
+    );
+    await expect(changing(`"remove": {"issues.linked": [$pad("", ${CAPS.metadataLookupLength + 1}, "x")]}`)).rejects.toThrow(
+      `/remove/issues.linked/0 must NOT have more than ${CAPS.metadataLookupLength} characters`
+    );
+    await expect(changing('"set": {"issues.linked": null}', '"remove": {"issues.linked": ["12"]}')).rejects.toThrow(
+      "write/0 changes 'issues.linked' twice"
+    );
+    await expect(changing('"upsert": {"issue.state": [{"ref": "12", "value": "open"}]}')).rejects.toThrow(
+      "write/0 changes elements of 'issue.state', which is not a list field"
+    );
+    await expect(changing('"set": {"issues.linked": {"ref": "12"}}')).rejects.toThrow(
+      `write/0 sets 'issues.linked', a list field, to {"ref":"12"}, which is not a list of elements`
+    );
+    await expect(changing(`"upsert": {"issues.linked": [{"ref": "12", "text": $pad("", ${CAPS.metadataValueBytes}, "x")}]}`)).rejects.toThrow(
+      `write/0 gives 'issues.linked' a value of more than ${CAPS.metadataValueBytes} bytes as JSON`
     );
   });
 });
@@ -232,14 +272,15 @@ describe("runAction", () => {
   const task = { kind: "task" as const, id: 7, title: "Fix the build" };
   const created = { status: 201, body: { number: 12, html_url: "https://tracker.example/acme/issues/12" } };
 
-  it("makes its endpoint's call with the item, and the change its write answers from the result", async () => {
-    expect(await runAction(plugin, "create", { item: task, connections: workspace, now, responses: [created] })).toEqual({
+  it("makes its endpoint's call with the item and the install's settings, and the change its write answers from the result", async () => {
+    const run = await runAction(plugin, "create", { item: task, settings: { prefix: "acme" }, connections: workspace, now, responses: [created] });
+    expect(run).toEqual({
       requests: [
         {
           method: "POST",
           url: "https://api.tracker.example/repos/acme/issues",
           headers: {},
-          body: { title: "Fix the build", body: "From task 7" },
+          body: { title: "Fix the build", body: "From acme-7" },
           connection: "workspace",
         },
       ],
@@ -262,7 +303,20 @@ describe("runAction", () => {
     expect(await runAction(plugin, "unlink", { item: task, now, responses: [] })).toEqual({ requests: [] });
   });
 
-  it("fails on a write that is not a change, and on an item it is not offered on", async () => {
+  it("sends its endpoint the params the reader answered, and writes from them or from the element it was run from", async () => {
+    const issue = { number: 12, title: "Broken", html_url: "https://tracker.example/acme/issues/12", state: "open" };
+    expect(await runAction(plugin, "link", { item: task, params: { number: 12 }, connections: workspace, now, responses: [{ body: issue }] })).toEqual({
+      requests: [{ method: "GET", url: "https://api.tracker.example/repos/acme/issues/12", headers: {}, connection: "workspace" }],
+      result: { number: 12, title: "Broken", url: issue.html_url, state: "open" },
+      change: { upsert: { "issues.linked": [{ ref: "12", url: issue.html_url, text: "#12 Broken", state: { status: "open" } }] } },
+    });
+    expect(await runAction(plugin, "unlink-one", { item: task, element: "12", now, responses: [] })).toEqual({
+      requests: [],
+      change: { remove: { "issues.linked": ["12"] } },
+    });
+  });
+
+  it("fails on a write that is not a change, and on an item, params or an element the action does not take", async () => {
     const changed = issuesPlugin();
     changed.actions!.unlink.write = '{"issue.number": null}';
     await expect(runAction(changed, "unlink", { item: task, now, responses: [] })).rejects.toThrow(
@@ -270,6 +324,12 @@ describe("runAction", () => {
     );
     await expect(runAction(plugin, "unlink", { item: { ...task, kind: "post" }, now, responses: [] })).rejects.toThrow(
       "'unlink' is not offered on post"
+    );
+    await expect(runAction(plugin, "link", { item: task, params: { number: 12, state: "open" }, now, responses: [] })).rejects.toThrow(
+      "'link' does not ask for 'state'"
+    );
+    await expect(runAction(plugin, "unlink", { item: task, element: "12", now, responses: [] })).rejects.toThrow(
+      "'unlink' is offered on no list's elements"
     );
   });
 });

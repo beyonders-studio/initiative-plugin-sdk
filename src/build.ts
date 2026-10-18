@@ -73,7 +73,7 @@ export interface BuiltPlugin {
 }
 
 /** What the listing writers read of a plug-in: its definition, or a {@link BuiltPlugin}'s. */
-export type ListedPlugin = Pick<AnyPlugin, "publicId" | "uid" | "name" | "scopes" | "hosts" | "hooks" | "listing">;
+export type ListedPlugin = Pick<AnyPlugin, "publicId" | "uid" | "name" | "scopes" | "callsPlugins" | "hosts" | "hooks" | "listing">;
 
 /** What a definition builds: the plug-in and its manifest, or every problem that stops it. */
 export type Compiled = { plugin: ListedPlugin; manifest: Manifest; problems?: never } | { problems: string[] };
@@ -263,13 +263,14 @@ async function bundleWidget(esbuild: Esbuild, root: string, module: string): Pro
 
 /**
  * What a definition says that its manifest does not show: a declarative plug-in
- * runs no hooks and is granted read scopes at most, and only a container
- * plug-in's listing names an image.
+ * runs no hooks, is granted read scopes at most and uses no other plug-in, and
+ * only a container plug-in's listing names an image.
  */
 function kindProblems(plugin: ListedPlugin): string[] {
   const problems: string[] = [];
   if (plugin.hosts) {
     if (Object.keys(plugin.hooks ?? {}).length) problems.push("hooks: a declarative plug-in runs no hooks");
+    if (plugin.callsPlugins) problems.push("callsPlugins: a declarative plug-in does not call Initiative, so it uses no other plug-in");
     const unread = (plugin.listing?.scopeCeiling ?? []).filter((scope) => !scope.endsWith(":read"));
     if (unread.length) {
       problems.push(

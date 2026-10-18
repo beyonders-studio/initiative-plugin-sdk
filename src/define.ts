@@ -43,6 +43,7 @@ import type {
   RequestStep,
   ReturnValueType,
   Scope,
+  Setting,
   Vendor,
   VendorAuth,
   VendorRequest,
@@ -305,9 +306,9 @@ export interface ScheduleDeclaration {
 export interface DeclarativeScheduleDeclaration<E> extends Pick<ScheduleDeclaration, "every"> {
   /** A read endpoint, by its key, whose `actors` include `installation`. */
   endpoint: ReadName<E>;
-  /** The endpoint's params, from `since`, `now` and `connection`. */
+  /** The endpoint's params, from `since`, `now`, `connection`, `settings` and `aliases`. */
   params?: Expression;
-  /** The targeted changes made from the endpoint's answer, `result`, beside `since` and `now`. */
+  /** The targeted changes made from the endpoint's answer, `result`, beside `since`, `now`, `settings` and `aliases`. */
   write: Expression;
 }
 
@@ -381,10 +382,14 @@ export interface WidgetDeclaration<E> extends Omit<Widget, "id" | "module_source
 
 /**
  * Something a reader runs on one item. `endpoint` names a write endpoint by its
- * key; a declarative plug-in's action names one, a `write`, or both.
+ * key, and `params` the endpoint's params Initiative asks the reader for; a
+ * declarative plug-in's action names an endpoint, a `write`, or both.
  */
-export type ActionDeclaration<E> = Omit<Action, "id" | "endpoint" | "write"> &
-  ({ endpoint: WriteName<E>; write?: Expression } | { endpoint?: never; write: Expression });
+export type ActionDeclaration<E> = Omit<Action, "id" | "endpoint" | "params" | "write"> &
+  (
+    | { endpoint: WriteName<E>; params?: Action["params"]; write?: Expression }
+    | { endpoint?: never; params?: never; write: Expression }
+  );
 
 export interface DashboardDeclaration<E, W> extends Omit<BundledDashboard, "widgets"> {
   widgets: Array<
@@ -524,6 +529,12 @@ export interface PluginDefinition<E, W> {
   minPluginApi?: string;
   /** The scopes it asks a community to grant. A declarative plug-in asks only for read scopes. */
   scopes?: Array<Scope | PluginScope>;
+  /**
+   * A container plug-in may act through any plug-in the community lets it use,
+   * not only those its `plugins:` scopes name (the manifest's
+   * `service.calls_plugins`).
+   */
+  callsPlugins?: boolean;
   /** A declarative plug-in's hosts: every host its requests may reach. Naming them makes the plug-in declarative. */
   hosts?: string[];
   /** How a declarative plug-in's requests carry their credential. Absent: `Authorization: Bearer <token>`. */
@@ -551,6 +562,10 @@ export interface PluginDefinition<E, W> {
   parts?: Record<string, Omit<Part, "id">>;
   /** What a reader may run on an item, keyed by action id. */
   actions?: Record<string, ActionDeclaration<E>>;
+  /** Values the community's admins set on the install, keyed by setting key. */
+  settings?: Record<string, Omit<Setting, "key">>;
+  /** Help with the plug-in's parts and settings: markdown, keyed by language tag. */
+  help?: Manifest["help"];
   listing?: ListingDeclaration;
 }
 
@@ -578,6 +593,7 @@ export function endpointId(plugin: { publicId: string }, name: string): string {
  * ids, in the contract's order. Each widget's `module_source` is taken from
  * `modules` by widget id. A definition naming `hosts` is declarative: its
  * manifest has no `service` block, and its `scopes` stand at the top level.
+ * A container's `callsPlugins` is its service block's `calls_plugins`.
  */
 export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = {}): Manifest {
   const id = (name: string) => endpointId(plugin, name);
@@ -614,6 +630,8 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
       ...action,
       ...(action.endpoint === undefined ? {} : { endpoint: id(action.endpoint) }),
     })),
+    settings: listOf(plugin.settings, (key, setting) => ({ key, ...setting })),
+    help: plugin.help,
   };
   const present = Object.fromEntries(
     Object.entries(blocks).filter(([, value]) => value !== undefined)
@@ -622,7 +640,14 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     plugin_kind: "service",
     ...(plugin.hosts
       ? {}
-      : { service: { public_id: plugin.publicId, protocol: 1, ...(plugin.scopes ? { scopes: [...plugin.scopes] } : {}) } }),
+      : {
+          service: {
+            public_id: plugin.publicId,
+            protocol: 1,
+            ...(plugin.scopes ? { scopes: [...plugin.scopes] } : {}),
+            ...(plugin.callsPlugins !== undefined ? { calls_plugins: plugin.callsPlugins } : {}),
+          },
+        }),
     features: FEATURES.filter((feature) => present[feature] !== undefined),
     default_name: plugin.name,
     ...(plugin.minimumAge ? { minimum_age: { ...plugin.minimumAge } } : {}),
