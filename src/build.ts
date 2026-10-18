@@ -106,7 +106,7 @@ function compileBuilt(root: string, file: string): Compiled {
     return { problems: [`${file}: a built plug-in names its ${[...missing, "manifest"].join(", ")}`] };
   }
   const { manifest, ...named } = built;
-  return checked({ ...named, scopes: manifest.service?.scopes, hosts: manifest.hosts }, manifest, []);
+  return checked({ ...named, scopes: manifest.service?.scopes ?? manifest.scopes, hosts: manifest.hosts }, manifest, []);
 }
 
 /**
@@ -263,14 +263,20 @@ async function bundleWidget(esbuild: Esbuild, root: string, module: string): Pro
 
 /**
  * What a definition says that its manifest does not show: a declarative plug-in
- * runs no hooks and asks for no scopes, and only a container plug-in's listing
- * names an image.
+ * runs no hooks and is granted read scopes at most, and only a container
+ * plug-in's listing names an image.
  */
 function kindProblems(plugin: ListedPlugin): string[] {
   const problems: string[] = [];
   if (plugin.hosts) {
     if (Object.keys(plugin.hooks ?? {}).length) problems.push("hooks: a declarative plug-in runs no hooks");
-    if (plugin.scopes) problems.push("scopes: a declarative plug-in asks for none, since it does not call Initiative");
+    const unread = (plugin.listing?.scopeCeiling ?? []).filter((scope) => !scope.endsWith(":read"));
+    if (unread.length) {
+      problems.push(
+        `listing: a declarative plug-in is granted read scopes at most, not ${unread.join(", ")}: ` +
+          "it keeps its own values on items it can read, and does not call Initiative"
+      );
+    }
     if (plugin.listing?.image || plugin.listing?.compose || plugin.listing?.runtime) {
       problems.push("listing: a declarative plug-in has no image, compose service or runtime");
     }

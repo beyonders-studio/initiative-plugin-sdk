@@ -12,13 +12,14 @@
  *
  * A declarative plug-in gives each endpoint a `request` (or `steps`) and a `map`
  * in place of a handler, and names its `hosts`: Initiative then makes the
- * calls and maps the answers itself, and there is no service to run. One plug-in
- * is one kind or the other.
+ * calls and maps the answers itself, and there is no service to run. Its
+ * schedules, actions and webhook events say in a `write` how Initiative changes
+ * the values it keeps on items. One plug-in is one kind or the other.
  *
  * Endpoints are named by their key. The manifest id is `plugin.<publicId>.<key>`,
  * and everywhere a definition refers to an endpoint (a widget, a sample, a
  * parameter's `options_from`, a bundled dashboard, `communitySummary`, an
- * action) it uses the key.
+ * action, a schedule) it uses the key.
  */
 
 import type { CommunityStatus } from "./tokens.js";
@@ -297,6 +298,19 @@ export interface ScheduleDeclaration {
   run: (call: ScheduleCall) => Promise<void>;
 }
 
+/**
+ * A declarative plug-in's schedule: Initiative makes a read endpoint's call as
+ * the installation, and changes the plug-in's values from its answer.
+ */
+export interface DeclarativeScheduleDeclaration<E> extends Pick<ScheduleDeclaration, "every"> {
+  /** A read endpoint, by its key, whose `actors` include `installation`. */
+  endpoint: ReadName<E>;
+  /** The endpoint's params, from `since`, `now` and `connection`. */
+  params?: Expression;
+  /** The targeted changes made from the endpoint's answer, `result`, beside `since` and `now`. */
+  write: Expression;
+}
+
 /** A member opening one of the plug-in's pages, as the handoff token names them. */
 export interface Handoff extends Call {
   page: string;
@@ -338,9 +352,16 @@ type EmitName<E> = {
 }[keyof E] &
   string;
 
-/** The vendor's webhooks. A declarative plug-in's events name the emit endpoint by its key. */
+/**
+ * The vendor's webhooks. A declarative plug-in's event rows name the emit
+ * endpoint by its key, beside the `map` of its payload, and may `write` the
+ * plug-in's values; a row does one or both.
+ */
 export type WebhooksDeclaration<E> = Omit<Webhooks, "events"> & {
-  events?: Array<Omit<WebhookEvent, "emit"> & { emit: EmitName<E> }>;
+  events?: Array<
+    Omit<WebhookEvent, "emit" | "map" | "write"> &
+      ({ emit: EmitName<E>; map: Expression; write?: Expression } | { emit?: never; map?: never; write: Expression })
+  >;
 };
 
 type ReturnsOf<X> = X extends { returns?: infer R } ? NonNullable<R> : {};
@@ -358,10 +379,12 @@ export interface WidgetDeclaration<E> extends Omit<Widget, "id" | "module_source
   sample_data?: { [K in ReadName<E>]?: Result<ReturnsOf<E[K]>> };
 }
 
-/** Something a reader runs on one item. `endpoint` names a write endpoint by its key. */
-export interface ActionDeclaration<E> extends Omit<Action, "id" | "endpoint"> {
-  endpoint: WriteName<E>;
-}
+/**
+ * Something a reader runs on one item. `endpoint` names a write endpoint by its
+ * key; a declarative plug-in's action names one, a `write`, or both.
+ */
+export type ActionDeclaration<E> = Omit<Action, "id" | "endpoint" | "write"> &
+  ({ endpoint: WriteName<E>; write?: Expression } | { endpoint?: never; write: Expression });
 
 export interface DashboardDeclaration<E, W> extends Omit<BundledDashboard, "widgets"> {
   widgets: Array<
@@ -499,6 +522,7 @@ export interface PluginDefinition<E, W> {
    * `listing.minAppVersion`, the oldest Initiative release it runs on.
    */
   minPluginApi?: string;
+  /** The scopes it asks a community to grant. A declarative plug-in asks only for read scopes. */
   scopes?: Array<Scope | PluginScope>;
   /** A declarative plug-in's hosts: every host its requests may reach. Naming them makes the plug-in declarative. */
   hosts?: string[];
@@ -508,8 +532,11 @@ export interface PluginDefinition<E, W> {
   /** Keyed by connection id. */
   connections?: Record<string, Omit<Connection, "id">>;
   webhooks?: WebhooksDeclaration<E>;
-  /** Keyed by schedule id. Each runs through the `schedule` hook. */
-  schedules?: Record<string, ScheduleDeclaration>;
+  /**
+   * Keyed by schedule id. A container's runs through the `schedule` hook; a
+   * declarative plug-in's is a read and a write Initiative makes.
+   */
+  schedules?: Record<string, ScheduleDeclaration | DeclarativeScheduleDeclaration<E>>;
   endpoints?: E;
   /** A read endpoint describing the community's standing with the plug-in's service. */
   communitySummary?: ReadName<E>;
@@ -549,8 +576,8 @@ export function endpointId(plugin: { publicId: string }, name: string): string {
 /**
  * The manifest a definition declares: its handlers left out, its keys made
  * ids, in the contract's order. Each widget's `module_source` is taken from
- * `modules` by widget id. A definition naming `hosts` is declarative, and its
- * manifest has no `service` block.
+ * `modules` by widget id. A definition naming `hosts` is declarative: its
+ * manifest has no `service` block, and its `scopes` stand at the top level.
  */
 export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = {}): Manifest {
   const id = (name: string) => endpointId(plugin, name);
@@ -559,9 +586,13 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     connections: listOf(plugin.connections, (key, connection) => ({ id: key, ...connection })),
     webhooks: plugin.webhooks && {
       ...plugin.webhooks,
-      ...(plugin.webhooks.events ? { events: plugin.webhooks.events.map((event) => ({ ...event, emit: id(event.emit) })) } : {}),
+      ...(plugin.webhooks.events
+        ? { events: plugin.webhooks.events.map((event) => (event.emit === undefined ? event : { ...event, emit: id(event.emit) })) }
+        : {}),
     },
-    schedules: listOf(plugin.schedules, (key, schedule) => ({ id: key, every: schedule.every })),
+    schedules: listOf(plugin.schedules, (key, schedule) =>
+      "run" in schedule ? { id: key, every: schedule.every } : { id: key, ...schedule, endpoint: id(schedule.endpoint) }
+    ),
     endpoints: listOf(plugin.endpoints, (key, endpoint) => endpointOf(id(key), endpoint, id)),
     community_summary: plugin.communitySummary === undefined ? undefined : id(plugin.communitySummary),
     widgets: listOf(plugin.widgets, (key, widget) => widgetOf(key, widget, modules[key] ?? "", id)),
@@ -578,7 +609,11 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     })),
     fields: listOf(plugin.fields, (key, field) => ({ key, ...field })),
     parts: listOf(plugin.parts, (key, part) => ({ id: key, ...part })),
-    actions: listOf(plugin.actions, (key, action) => ({ id: key, ...action, endpoint: id(action.endpoint) })),
+    actions: listOf(plugin.actions, (key, action) => ({
+      id: key,
+      ...action,
+      ...(action.endpoint === undefined ? {} : { endpoint: id(action.endpoint) }),
+    })),
   };
   const present = Object.fromEntries(
     Object.entries(blocks).filter(([, value]) => value !== undefined)
@@ -594,6 +629,7 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     ...(plugin.minPluginApi !== undefined ? { min_plugin_api: plugin.minPluginApi } : {}),
     ...(plugin.hosts ? { hosts: [...plugin.hosts] } : {}),
     ...(plugin.auth ? { auth: plugin.auth } : {}),
+    ...(plugin.hosts && plugin.scopes ? { scopes: [...plugin.scopes] } : {}),
     ...present,
   };
 }

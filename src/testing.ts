@@ -1,6 +1,6 @@
 /**
- * `initiative-plugin-sdk/testing`: a declarative plug-in's requests and mappings,
- * run against recorded vendor answers, with no server and no network.
+ * `initiative-plugin-sdk/testing`: a declarative plug-in's requests, mappings and
+ * writes, run against recorded vendor answers, with no server and no network.
  *
  * Each runner renders the requests the way Initiative makes them (method,
  * address with its query, headers, body), answers them from `responses` in
@@ -16,19 +16,26 @@
  *   to retry;
  * - `{ refused }`: an `after_connect` that refused the connection.
  *
+ * An action's run answers the `change` its `write` makes to the plug-in's values
+ * on the item, and a schedule's or a delivery's the targeted `writes`, each held
+ * to the contract's `change` or `targetedChange`; a `write` answering nothing
+ * changes nothing.
+ *
  * A rendered request carries no credential: Initiative adds the one its
  * `connection` names, as the plug-in's `auth` says. A predicate (`when`, `more`,
  * `refuse_when`) holds when JSONata's `$boolean` of its answer is true.
  *
  * A run fails, rather than answering, on a mistake in the test or the plug-in: a
  * request with no recorded response left for it, a recorded response nothing
- * asked for, or a mapped answer that does not fit the declared returns.
+ * asked for, a mapped answer that does not fit the declared returns, or a
+ * `write` answering what is not a change.
  */
 
-import type { ConnectionState, ErrorRule, StatusMatch, VendorRequest } from "./contract.js";
-import { PLATFORM_CODES } from "./contract.js";
-import type { AnyPlugin, ReturnSpec } from "./define.js";
+import type { Change, ConnectionState, ErrorRule, ItemKind, StatusMatch, TargetedChange, VendorRequest } from "./contract.js";
+import { CAPS, PLATFORM_CODES } from "./contract.js";
+import type { AnyPlugin, DeclarativeEndpoint, ReturnSpec } from "./define.js";
 import { evaluate, ExpressionError } from "./expression.js";
+import { definitionValidator } from "./validate.js";
 
 export { evaluate, ExpressionError, parseExpression } from "./expression.js";
 
@@ -57,6 +64,25 @@ export type Run<T> = { requests: RenderedRequest[] } & (
   | { refused: string }
 );
 
+/** A declarative action's run: what it sent, and what its endpoint and its `write` answered. */
+export type ActionRun = { requests: RenderedRequest[] } & (
+  | {
+      /** The endpoint's mapped answer, when the action names one. */
+      result?: Record<string, unknown>;
+      /** The change its `write` answered, when it has one that answered something. */
+      change?: Change;
+    }
+  | { unavailable: string; detail?: string }
+  | { transient: true }
+);
+
+/** A declarative schedule's run: what it sent, the endpoint's mapped answer, and the changes its `write` answered. */
+export type ScheduleRun = { requests: RenderedRequest[] } & (
+  | { result: Record<string, unknown>; writes: TargetedChange[] }
+  | { unavailable: string; detail?: string }
+  | { transient: true }
+);
+
 export interface Recorded {
   /** The vendor's answers, in the order the requests are made. */
   responses: RecordedResponse[];
@@ -71,7 +97,7 @@ interface Answer {
   body: unknown;
 }
 
-type Answered = { unavailable: string; detail?: string } | { transient: true } | { refused: string };
+type Answered = { unavailable: string; detail?: string } | { transient: true };
 
 /** A run's answer, thrown from wherever it is decided. */
 class Outcome {
@@ -118,8 +144,8 @@ class Context {
     };
   }
 
-  async run<T>(work: () => Promise<{ result: T } | Answered>): Promise<Run<T>> {
-    let answered: { result: T } | Answered;
+  async run<S extends object>(work: () => Promise<S | Answered>): Promise<{ requests: RenderedRequest[] } & (S | Answered)> {
+    let answered: S | Answered;
     try {
       answered = await work();
     } catch (error) {
@@ -296,6 +322,84 @@ function fits(answer: unknown, returns: Record<string, ReturnSpec> | undefined, 
 }
 
 /**
+ * Holds what a `write` answered to the contract's definition `name`, `change`
+ * or `targetedChange`, and each value it sets to the cap on one value.
+ */
+function fitsChange(answer: unknown, name: "change" | "targetedChange", where: string): void {
+  const check = definitionValidator(name);
+  if (!check(answer)) {
+    const why = (check.errors ?? []).map((error) => `${error.instancePath || "/"} ${error.message}`).join("; ");
+    throw new Error(`${where} answered ${text(answer)}, which is not a ${name === "change" ? "change" : "targeted change"}: ${why}`);
+  }
+  for (const [key, value] of Object.entries((answer as Change).set)) {
+    if (value !== null && Buffer.byteLength(JSON.stringify(value), "utf-8") > CAPS.metadataValueBytes) {
+      throw new Error(`${where} sets '${key}' to more than ${CAPS.metadataValueBytes} bytes as JSON`);
+    }
+  }
+}
+
+/** What a `write` answered, as targeted changes: a list of at most `writeTargets`. Nothing is no change. */
+function targeted(answer: unknown, where: string): TargetedChange[] {
+  if (answer === undefined) return [];
+  if (!Array.isArray(answer)) {
+    throw new Error(
+      `${where} answered ${text(answer)}, which is not a list of targeted changes ` +
+        "(a JSONata path matching one item answers it alone: wrap the answer in [ ] to keep a list)"
+    );
+  }
+  if (answer.length > CAPS.writeTargets) throw new Error(`${where} answered ${answer.length} changes, more than ${CAPS.writeTargets}`);
+  answer.forEach((change, index) => fitsChange(change, "targetedChange", `${where}/${index}`));
+  return answer;
+}
+
+/** A declarative endpoint of the plug-in, by its key. */
+function declarative(plugin: AnyPlugin, name: string): DeclarativeEndpoint<any, any> {
+  const endpoint = plugin.endpoints?.[name];
+  if (!endpoint || !("map" in endpoint)) throw new TypeError(`'${name}' is not a declarative endpoint of this plug-in`);
+  return endpoint;
+}
+
+/**
+ * One declarative endpoint's request or steps, answered in `context`, and its
+ * map held to the declared returns: what {@link runEndpoint} runs, and what an
+ * action or a schedule runs for the endpoint it names. An action's call also
+ * reads its `item`.
+ */
+async function answerEndpoint(
+  endpoint: DeclarativeEndpoint<any, any>,
+  call: { params?: Record<string, unknown>; connections?: Record<string, Record<string, unknown>>; item?: object },
+  context: Context
+): Promise<{ result: Record<string, unknown> } | { unavailable: string }> {
+  const given = call.connections ?? {};
+  const required = [...(endpoint.requires?.all_of ?? []), ...(endpoint.requires?.any_of ?? [])];
+  const connections = Object.fromEntries(required.filter((id) => Object.hasOwn(given, id)).map((id) => [id, given[id]]));
+  const base = { params: call.params ?? {}, connections, now: context.now, ...(call.item ? { item: call.item } : {}) };
+  const steps = endpoint.steps ?? [{ name: "", request: endpoint.request! }];
+  const answers: Record<string, Answer> = {};
+  let read: object = base;
+  for (const [index, step] of steps.entries()) {
+    read = {
+      ...base,
+      connection: given[step.request.connection ?? ""] ?? {},
+      ...(endpoint.steps ? { steps: { ...answers } } : {}),
+    };
+    const where = endpoint.steps ? `steps/${index}/request` : "request";
+    const response = await perform(step.request, read, context, where);
+    if (endpoint.steps) answers[step.name] = response;
+    read = { ...read, ...(endpoint.steps ? { steps: { ...answers } } : {}), response };
+  }
+  const answer = await context.value(endpoint.map, read, "map");
+  if (answer && typeof answer === "object" && "unavailable" in answer) {
+    const code = (answer as { unavailable: unknown }).unavailable;
+    if (typeof code !== "string" || ![...(endpoint.unavailable ?? []), ...PLATFORM_CODES].includes(code)) {
+      throw new Error(`map answered unavailable ${text(code)}, which is not one of this endpoint's codes`);
+    }
+    return { unavailable: code };
+  }
+  return { result: fits(answer, endpoint.returns, "map") };
+}
+
+/**
  * One declarative endpoint: its request or steps rendered from `params`, the
  * `connections`' non-secret fields (keyed by connection id) and `now`, answered
  * from `responses`, and its map held to the declared returns. An expression
@@ -312,37 +416,80 @@ export async function runEndpoint(
     connections?: Record<string, Record<string, unknown>>;
   }
 ): Promise<Run<Record<string, unknown>>> {
-  const endpoint = plugin.endpoints?.[name];
-  if (!endpoint || !("map" in endpoint)) throw new TypeError(`'${name}' is not a declarative endpoint of this plug-in`);
+  const endpoint = declarative(plugin, name);
   const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? []);
-  return context.run<Record<string, unknown>>(async () => {
-    const given = call.connections ?? {};
-    const required = [...(endpoint.requires?.all_of ?? []), ...(endpoint.requires?.any_of ?? [])];
-    const connections = Object.fromEntries(required.filter((id) => Object.hasOwn(given, id)).map((id) => [id, given[id]]));
-    const base = { params: call.params ?? {}, connections, now: context.now };
-    const steps = endpoint.steps ?? [{ name: "", request: endpoint.request! }];
-    const answers: Record<string, Answer> = {};
-    let read: object = base;
-    for (const [index, step] of steps.entries()) {
-      read = {
-        ...base,
-        connection: call.connections?.[step.request.connection ?? ""] ?? {},
-        ...(endpoint.steps ? { steps: { ...answers } } : {}),
-      };
-      const where = endpoint.steps ? `steps/${index}/request` : "request";
-      const response = await perform(step.request, read, context, where);
-      if (endpoint.steps) answers[step.name] = response;
-      read = { ...read, ...(endpoint.steps ? { steps: { ...answers } } : {}), response };
+  return context.run(() => answerEndpoint(endpoint, call, context));
+}
+
+/**
+ * A declarative action, run on one item. Its endpoint, when it names one, is
+ * rendered and answered as {@link runEndpoint} does it, with no params and its
+ * expressions also reading `item`; an answer of unavailable or transient is the
+ * run's, and nothing is written. Its `write`, when it has one, then answers the
+ * change Initiative makes to the plug-in's values on the item, reading `item`,
+ * `held` (those values as they stand, by key), `result` (the endpoint's mapped
+ * answer, absent with no endpoint) and `now`. Like the endpoint's, an
+ * expression that fails answers `mapping-failed`.
+ */
+export async function runAction(
+  plugin: AnyPlugin,
+  name: string,
+  call: Recorded & {
+    item: { kind: ItemKind; id: number; title: string };
+    held?: Record<string, unknown>;
+    connections?: Record<string, Record<string, unknown>>;
+  }
+): Promise<ActionRun> {
+  const action = plugin.actions?.[name];
+  if (!action) throw new TypeError(`'${name}' is not an action of this plug-in`);
+  if (!action.on.includes(call.item.kind)) throw new TypeError(`'${name}' is not offered on ${call.item.kind}`);
+  const endpoint = action.endpoint === undefined ? undefined : declarative(plugin, action.endpoint);
+  const context = new Context(plugin.hosts ?? [], call, endpoint?.errors ?? []);
+  return context.run<{ result?: Record<string, unknown>; change?: Change }>(async () => {
+    const called = endpoint && (await answerEndpoint(endpoint, { connections: call.connections, item: call.item }, context));
+    if (called && !("result" in called)) return called;
+    const read = { item: call.item, held: call.held ?? {}, ...called, now: context.now };
+    const change = action.write === undefined ? undefined : await context.value(action.write, read, "write");
+    if (change !== undefined) fitsChange(change, "change", "write");
+    return { ...called, ...(change === undefined ? {} : { change: change as Change }) };
+  });
+}
+
+/**
+ * A declarative schedule's run in one community. Its `params` answer the
+ * endpoint's params from `since`, `now` and `connection` (the fields of the
+ * connection the endpoint's first request names); the endpoint is rendered and
+ * answered with them as {@link runEndpoint} does it; and its `write` answers,
+ * from the endpoint's mapped answer as `result` beside `since` and `now`, the
+ * changes Initiative makes as the install. `since` is when the schedule last
+ * succeeded there, as ISO 8601: null, the default, the first time.
+ */
+export async function runSchedule(
+  plugin: AnyPlugin,
+  name: string,
+  call: Recorded & {
+    since?: string | null;
+    connections?: Record<string, Record<string, unknown>>;
+  }
+): Promise<ScheduleRun> {
+  const schedule = plugin.schedules?.[name];
+  if (!schedule || "run" in schedule) throw new TypeError(`'${name}' is not a declarative schedule of this plug-in`);
+  const endpoint = declarative(plugin, schedule.endpoint);
+  const context = new Context(plugin.hosts ?? [], call, endpoint.errors ?? []);
+  return context.run<{ result: Record<string, unknown>; writes: TargetedChange[] }>(async () => {
+    const since = call.since ?? null;
+    const first = endpoint.steps?.[0].request ?? endpoint.request!;
+    const connection = call.connections?.[first.connection ?? ""] ?? {};
+    const params =
+      schedule.params === undefined ? undefined : await context.value(schedule.params, { since, now: context.now, connection }, "params");
+    if (params !== undefined && (!params || typeof params !== "object" || Array.isArray(params))) {
+      throw new Error(`params answered ${text(params)}, which is not an object of the endpoint's params`);
     }
-    const answer = await context.value(endpoint.map, read, "map");
-    if (answer && typeof answer === "object" && "unavailable" in answer) {
-      const code = (answer as { unavailable: unknown }).unavailable;
-      if (typeof code !== "string" || ![...(endpoint.unavailable ?? []), ...PLATFORM_CODES].includes(code)) {
-        throw new Error(`map answered unavailable ${text(code)}, which is not one of this endpoint's codes`);
-      }
-      return { unavailable: code };
-    }
-    return { result: fits(answer, endpoint.returns, "map") };
+    const sent = { params: params as Record<string, unknown> | undefined, connections: call.connections };
+    const called = await answerEndpoint(endpoint, sent, context);
+    if (!("result" in called)) return called;
+    const writes = targeted(await context.value(schedule.write, { result: called.result, since, now: context.now }, "write"), "write");
+    return { result: called.result, writes };
   });
 }
 
@@ -359,7 +506,7 @@ export async function runAfterConnect(
   const after = plugin.connections?.[connection]?.flow?.after_connect;
   if (typeof after !== "object") throw new TypeError(`'${connection}' has no declarative after_connect`);
   const context = new Context(plugin.hosts ?? [], call, []);
-  return context.run<{ values?: Record<string, unknown>; account_label?: string }>(async () => {
+  return context.run<{ result: { values?: Record<string, unknown>; account_label?: string } } | { refused: string }>(async () => {
     const base = { params: call.params ?? {}, now: context.now };
     const steps = after.steps ?? [{ name: "", request: after.request! }];
     const answers: Record<string, Answer> = {};
@@ -403,18 +550,20 @@ export async function runHealth(
   });
 }
 
-/** What one delivery emits, and the connection state it sets. */
+/** What one delivery emits, the changes it makes, and the connection state it sets. */
 export interface WebhookRun {
   event?: { emit: string; payload: Record<string, unknown> };
+  /** The targeted changes the matching `events` row's `write` answered, when it has one. */
+  writes?: TargetedChange[];
   status?: { connection: string; state: ConnectionState };
 }
 
 /**
- * One webhook delivery, as a declarative plug-in maps it: the event the first
- * matching `events` row emits (by the emit endpoint's key, its payload held to
- * that endpoint's returns), and the state the first matching `status` row
- * sets. A delivery nothing matches answers neither. An expression that fails
- * throws {@link ExpressionError}.
+ * One webhook delivery, as a declarative plug-in maps it: the first matching
+ * `events` row's event (by the emit endpoint's key, its payload held to that
+ * endpoint's returns) and the changes its `write` answers, and the state the
+ * first matching `status` row sets. A delivery nothing matches answers neither.
+ * An expression that fails throws {@link ExpressionError}.
  */
 export async function runWebhook(
   plugin: AnyPlugin,
@@ -438,8 +587,11 @@ export async function runWebhook(
   const out: WebhookRun = {};
   for (const row of plugin.webhooks?.events ?? []) {
     if (!(await holds(row.when))) continue;
-    const payload = await evaluate(row.map, document, { now: clock });
-    out.event = { emit: row.emit, payload: fits(payload, plugin.endpoints?.[row.emit]?.returns, `the ${row.emit} event`) };
+    if (row.emit !== undefined) {
+      const payload = await evaluate(row.map, document, { now: clock });
+      out.event = { emit: row.emit, payload: fits(payload, plugin.endpoints?.[row.emit]?.returns, `the ${row.emit} event`) };
+    }
+    if (row.write !== undefined) out.writes = targeted(await evaluate(row.write, document, { now: clock }), "write");
     break;
   }
   for (const row of plugin.webhooks?.status ?? []) {

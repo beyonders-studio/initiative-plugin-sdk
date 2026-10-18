@@ -6,8 +6,9 @@
  * (the endpoint a widget binds, a `requires` term's connection, an endpoint's
  * service prefix), the features/blocks cross-check in both directions, UTF-8
  * byte-size caps, the rules tying a connection's `flow` and `token` to its
- * scope and fields, what a vendor `setup` writes to, the bounds and unique
- * ids of `schedules`, and the unique keys and ids of `fields`, `parts` and
+ * scope and fields, what a vendor `setup` writes to, the bounds, ids and
+ * endpoints of `schedules`, which terms each kind's schedules, actions and
+ * webhook events take, and the unique keys and ids of `fields`, `parts` and
  * `actions`, what a part's nodes and an action name, and a part's size and
  * depth.
  *
@@ -169,14 +170,25 @@ export interface ValidationProblem {
 }
 
 /** Compiled once — Ajv's compile step is the expensive part, not validation. */
+let ajv: Ajv2020 | undefined;
 let compiled: ValidateFunction | undefined;
 
 function schemaValidator(): ValidateFunction {
   if (!compiled) {
-    const ajv = new Ajv2020({ allErrors: true, strict: false });
+    ajv = new Ajv2020({ allErrors: true, strict: false });
     compiled = ajv.compile(manifestSchema());
   }
   return compiled;
+}
+
+/**
+ * One of the contract's definitions as a check of a value rather than of a
+ * manifest: what a declarative plug-in's `write` answered, held to `change` or
+ * `targetedChange`.
+ */
+export function definitionValidator(name: string): ValidateFunction {
+  const { $id } = schemaValidator().schema as { $id: string };
+  return ajv!.getSchema(`${$id}#/$defs/${name}`)!;
 }
 
 /**
@@ -641,10 +653,13 @@ function referenceProblems(body: Manifest, publicId: string | undefined): Valida
     (body[block] ?? []).forEach((item, index) => checkRequires(item.requires, `/${block}/${index}/requires`));
   }
   (body.actions ?? []).forEach((action, index) => {
-    // Initiative calls an action's endpoint for the reader, and only a write
-    // does something on their behalf.
+    // Initiative calls an action's endpoint for the reader. A container's does
+    // the work, so it is a write; a declarative plug-in's `write` does the work,
+    // so its endpoint may be a read that fetches what the write keeps.
+    if (action.endpoint === undefined) return;
     const named = byId.get(action.endpoint);
-    if (named?.direction !== "write") {
+    const allowed = body.service === undefined ? ["read", "write"] : ["write"];
+    if (!named || !allowed.includes(named.direction)) {
       problems.push({
         where: `/actions/${index}/endpoint`,
         message: named
@@ -855,17 +870,44 @@ function setupProblems(body: Manifest): ValidationProblem[] {
   return problems;
 }
 
-/** Each schedule's interval is within the bounds, and no two share an id. */
+/**
+ * Each schedule's interval is within the bounds, and no two share an id. A
+ * declarative plug-in's schedule makes a read as the installation, and its id
+ * is no connection's.
+ */
 function scheduleProblems(body: Manifest): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
   const seen = new Set<string>();
+  const declarative = body.service === undefined;
+  const connections = new Set((body.connections ?? []).map((connection) => connection.id));
   (body.schedules ?? []).forEach((schedule, index) => {
     const where = `/schedules/${index}`;
     if (seen.has(schedule.id)) {
       problems.push({ where: `${where}/id`, message: `'${schedule.id}' is declared twice` });
     }
     seen.add(schedule.id);
+    if (declarative && connections.has(schedule.id)) {
+      problems.push({
+        where: `${where}/id`,
+        message: `'${schedule.id}' is also a connection's id, and Initiative keys connection health checks by connection id`,
+      });
+    }
     problems.push(...intervalProblems(schedule.every, `${where}/every`));
+    if (!declarative || schedule.endpoint === undefined) return;
+    const named = (body.endpoints ?? []).find((endpoint) => endpoint.id === schedule.endpoint);
+    if (named?.direction !== "read") {
+      problems.push({
+        where: `${where}/endpoint`,
+        message: named
+          ? `names '${schedule.endpoint}', which is a ${named.direction} endpoint`
+          : `names '${schedule.endpoint}', which this manifest does not declare`,
+      });
+    } else if (!named.actors?.includes("installation")) {
+      problems.push({
+        where: `${where}/endpoint`,
+        message: `'${schedule.endpoint}' does not take the installation as its actor, and no person is present when a schedule runs`,
+      });
+    }
   });
   return problems;
 }
@@ -936,8 +978,9 @@ const DECLARATIVE_TERMS = ["request", "steps", "map", "errors"] as const;
 /**
  * A plug-in is one kind or the other. A declarative plug-in — no `service` block —
  * names its hosts, and every read and write it offers is a request and a map:
- * there is no container for a handler, hook, schedule or page to run in. A
- * container plug-in uses none of the declarative terms.
+ * there is no container for a handler, hook or page to run in, so its schedules
+ * and actions say in expressions what Initiative does. It asks only for read
+ * scopes. A container plug-in uses none of the declarative terms.
  */
 function kindProblems(body: Manifest): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
@@ -947,11 +990,28 @@ function kindProblems(body: Manifest): ValidationProblem[] {
 
   if (body.service === undefined) {
     if (!body.hosts) push("/hosts", "a declarative plug-in (one with no service block) names the hosts it calls");
-    if (body.schedules) push("/schedules", "a declarative plug-in has no schedules: they call a container's hook");
     if (body.pages) push("/pages", "a declarative plug-in has no pages: a page is served by a container");
-    if (body.fields) push("/fields", "a declarative plug-in has no fields: it holds no installation token to keep their metadata with");
-    if (body.parts) push("/parts", "a declarative plug-in has no parts: they show a container's fields and actions");
-    if (body.actions) push("/actions", "a declarative plug-in has no actions: an action's write runs a container's handler");
+    (body.scopes ?? []).forEach((scope, index) => {
+      if (!scope.endsWith(":read")) {
+        push(
+          `/scopes/${index}`,
+          "a declarative plug-in asks only for read scopes: it keeps its own values on items it can read, and does not call Initiative"
+        );
+      }
+    });
+    (body.schedules ?? []).forEach((schedule, index) => {
+      if (schedule.endpoint === undefined || schedule.write === undefined) {
+        push(
+          `/schedules/${index}`,
+          "a declarative plug-in's schedule names the read it makes and the write it makes from the answer: there is no hook to call"
+        );
+      }
+    });
+    (body.actions ?? []).forEach((action, index) => {
+      if (action.endpoint === undefined && action.write === undefined) {
+        push(`/actions/${index}`, "a declarative plug-in's action names an endpoint, a write, or both");
+      }
+    });
     endpoints.forEach((endpoint, index) => {
       const where = `/endpoints/${index}`;
       if (endpoint.direction === "emit") {
@@ -978,6 +1038,18 @@ function kindProblems(body: Manifest): ValidationProblem[] {
     for (const key of ["hosts", "auth"] as const) {
       if (body[key] !== undefined) push(`/${key}`, `'${key}' is a declarative plug-in's term; a container plug-in makes its own calls`);
     }
+    if (body.scopes !== undefined) push("/scopes", "a container plug-in declares its scopes in its service block");
+    (body.schedules ?? []).forEach((schedule, index) => {
+      for (const key of ["endpoint", "params", "write"] as const) {
+        if (schedule[key] !== undefined) push(`/schedules/${index}/${key}`, "a container plug-in's schedule calls its schedule hook");
+      }
+    });
+    (body.actions ?? []).forEach((action, index) => {
+      if (action.endpoint === undefined) {
+        push(`/actions/${index}`, "a container plug-in's action names the write endpoint its handler answers");
+      }
+      if (action.write !== undefined) push(`/actions/${index}/write`, "a container plug-in's action is answered by its handler");
+    });
     endpoints.forEach((endpoint, index) => {
       for (const key of DECLARATIVE_TERMS) {
         if (endpoint[key] !== undefined) {
@@ -1027,8 +1099,9 @@ function wellFormedHost(host: string): boolean {
 /**
  * What a declarative plug-in's terms say: every expression parses, every request
  * names what it may, a request on a member's connection is named in the
- * endpoint's `requires`, steps read only the steps before them, every event emits
- * a declared emission, and each refusal names a code the endpoint has.
+ * endpoint's `requires`, steps read only the steps before them, every event row
+ * emits a declared emission with its map, writes, or both, and each refusal
+ * names a code the endpoint has.
  */
 function declarativeProblems(body: Manifest): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
@@ -1166,7 +1239,19 @@ function declarativeProblems(body: Manifest): ValidationProblem[] {
     const where = `/webhooks/events/${index}`;
     expression(event.when, `${where}/when`);
     expression(event.map, `${where}/map`);
-    if (!emits.has(event.emit)) push(`${where}/emit`, `'${event.emit}' is not an emit endpoint this plug-in declares`);
+    expression(event.write, `${where}/write`);
+    if (event.emit === undefined && event.write === undefined) push(where, "an event row emits, writes, or both");
+    if ((event.emit === undefined) !== (event.map === undefined)) {
+      push(where, "an event row gives both 'emit' and the 'map' of its payload");
+    }
+    if (event.emit !== undefined && !emits.has(event.emit)) {
+      push(`${where}/emit`, `'${event.emit}' is not an emit endpoint this plug-in declares`);
+    }
+  });
+  (body.actions ?? []).forEach((action, index) => expression(action.write, `/actions/${index}/write`));
+  (body.schedules ?? []).forEach((schedule, index) => {
+    expression(schedule.params, `/schedules/${index}/params`);
+    expression(schedule.write, `/schedules/${index}/write`);
   });
   (body.webhooks?.status ?? []).forEach((row, index) => {
     const where = `/webhooks/status/${index}`;

@@ -22,6 +22,7 @@ export {
   type EntitlementCall,
   COMMUNITY_HOOKS,
   type DashboardDeclaration,
+  type DeclarativeScheduleDeclaration,
   type EmittedEndpoint,
   type EndpointCall,
   type EndpointDeclaration,

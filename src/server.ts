@@ -171,6 +171,7 @@ export function createPlugin(
   // Endpoint id → the item kinds the plug-in's actions run it on.
   const actionKinds = new Map<string, ItemKind[]>();
   for (const action of Object.values(plugin.actions ?? {})) {
+    if (action.endpoint === undefined) continue;
     const id = endpointId(plugin, action.endpoint);
     actionKinds.set(id, [...(actionKinds.get(id) ?? []), ...action.on]);
   }
@@ -267,7 +268,7 @@ export function createPlugin(
 
     if (name === "schedule") {
       const schedule = plugin.schedules?.[raw.schedule as string];
-      if (!schedule) return refuse(404, "not-found", `no schedule '${raw.schedule}'`);
+      if (!schedule || !("run" in schedule)) return refuse(404, "not-found", `no schedule '${raw.schedule}'`);
       const done = await answered(
         () => schedule.run({ ...call, schedule: raw.schedule as string, since: optionalString(raw.since) }),
         `schedule ${raw.schedule}`
