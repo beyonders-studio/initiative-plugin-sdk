@@ -980,7 +980,9 @@ it("lists a repository's open issues", async () => {
   removes its key, and every value is held to the metadata caps. A list
   field's value is its whole list of elements; its elements change by their
   `ref` with `{"upsert": {"<key>": [<element>]}}`, which adds each element or
-  replaces the one with its `ref`, and `{"remove": {"<key>": ["<ref>"]}}`. A
+  merges it into the one with its `ref` (the properties it gives replace that
+  element's, the rest stay, and its `state` merges by facet, so a write that
+  knows one fact changes that fact alone), and `{"remove": {"<key>": ["<ref>"]}}`. A
   change gives at least one of `set`, `upsert` and `remove`, and changes each
   key with only one. A **targeted change** adds its `target`:
   `{"kind": "task", "id": 7}` for one item, `{"install": true}` for the

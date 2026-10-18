@@ -1279,7 +1279,10 @@ export interface Change {
   set?: Record<string, unknown>;
   /**
    * Elements by metadata key ('listElement'): each is added to that key's list,
-   * or replaces the element there with its 'ref'.
+   * or merged into the element there with its 'ref': the properties it gives
+   * replace that element's, the ones it leaves out stay, and its 'state' merges
+   * the same way by facet. So a write that knows one fact about an element
+   * changes that fact alone.
    */
   upsert?: Record<string, ListElement[]>;
   /**
@@ -1301,8 +1304,9 @@ export interface TargetedChange {
    */
   set?: Record<string, unknown>;
   /**
-   * As a change's: elements by metadata key, each added to its list or
-   * replacing the one with its 'ref'.
+   * As a change's: elements by metadata key, each added to its list or merged
+   * into the one with its 'ref', property by property and its 'state' facet by
+   * facet.
    */
   upsert?: Record<string, ListElement[]>;
   /**
@@ -1341,7 +1345,8 @@ export type ChangeTarget = {
  * checkbox element holds its value in 'value'; a link element is {ref, url,
  * text?}, a badge element {ref, text, tone?} and a progress element {ref,
  * value, max}. Initiative keeps each element as a value of its own, of at most
- * 8192 bytes as JSON.
+ * 8192 bytes as JSON. An 'upsert' may give only some of an element's
+ * properties: they are merged into the element with its 'ref'.
  */
 export interface ListElement {
   ref: ElementRef;

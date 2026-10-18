@@ -1797,7 +1797,7 @@
               "$ref": "#/$defs/listElement"
             }
           },
-          "description": "Elements by metadata key ('listElement'): each is added to that key's list, or replaces the element there with its 'ref'."
+          "description": "Elements by metadata key ('listElement'): each is added to that key's list, or merged into the element there with its 'ref': the properties it gives replace that element's, the ones it leaves out stay, and its 'state' merges the same way by facet. So a write that knows one fact about an element changes that fact alone."
         },
         "remove": {
           "type": "object",
@@ -1860,7 +1860,7 @@
               "$ref": "#/$defs/listElement"
             }
           },
-          "description": "As a change's: elements by metadata key, each added to its list or replacing the one with its 'ref'."
+          "description": "As a change's: elements by metadata key, each added to its list or merged into the one with its 'ref', property by property and its 'state' facet by facet."
         },
         "remove": {
           "type": "object",
@@ -1965,7 +1965,7 @@
     },
     "listElement": {
       "type": "object",
-      "description": "One element of a list field's value: one value of the field's 'kind', with a 'ref' that tells it from the list's others. A text, number, date, datetime or checkbox element holds its value in 'value'; a link element is {ref, url, text?}, a badge element {ref, text, tone?} and a progress element {ref, value, max}. Initiative keeps each element as a value of its own, of at most 8192 bytes as JSON.",
+      "description": "One element of a list field's value: one value of the field's 'kind', with a 'ref' that tells it from the list's others. A text, number, date, datetime or checkbox element holds its value in 'value'; a link element is {ref, url, text?}, a badge element {ref, text, tone?} and a progress element {ref, value, max}. Initiative keeps each element as a value of its own, of at most 8192 bytes as JSON. An 'upsert' may give only some of an element's properties: they are merged into the element with its 'ref'.",
       "required": [
         "ref"
       ],
