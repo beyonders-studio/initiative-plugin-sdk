@@ -60,6 +60,7 @@ export function trackerPlugin() {
     uid: "K7M2QX8N4TVB9C",
     name: "Tracker",
     scopes: ["projects:read", "plugins:acme.github"],
+    callsPlugins: true,
     vendor: { fields: [{ key: "client_id", type: "string", required: true, label: { en: "Client id" } }] },
     connections: {
       account: {
@@ -253,7 +254,7 @@ export function issuesPlugin() {
     request: {
       method: "POST",
       url: `${api("/repos/")} & connection.owner & "/issues"`,
-      body: '{"title": item.title, "body": "From task " & item.id}',
+      body: '{"title": item.title, "body": "From " & settings.prefix & "-" & item.id}',
       connection: "workspace",
     },
     map: '{"number": response.body.number, "url": response.body.html_url}',
@@ -271,6 +272,15 @@ export function issuesPlugin() {
       connection: "workspace",
     },
     map: '{"numbers": response.body.number[], "states": response.body.state[]}',
+  });
+
+  const linkIssue = defineEndpoint({
+    direction: "write",
+    actors: ["installation"],
+    params: { number: { type: "int", label: { en: "Issue" }, required: true } },
+    returns: { number: "int", title: "string", url: "string", state: "string" },
+    request: { method: "GET", url: `${api("/repos/")} & connection.owner & "/issues/" & params.number`, connection: "workspace" },
+    map: '{"number": response.body.number, "title": response.body.title, "url": response.body.html_url, "state": response.body.state}',
   });
 
   return definePlugin({
@@ -336,7 +346,12 @@ export function issuesPlugin() {
           when: 'headers."x-event" = "issues" and payload.action = "opened"',
           emit: "issue-opened",
           map: '{"number": payload.issue.number, "title": payload.issue.title}',
-          write: '[{"target": {"install": true}, "set": {"issues.last_opened": payload.issue.number}}]',
+          // The install's own value, and a link on each task the title names by the prefix or an earlier one.
+          write:
+            '[{"target": {"install": true}, "set": {"issues.last_opened": payload.issue.number}}, ' +
+            '$match(payload.issue.title, /\\b([a-z][a-z0-9]*)-([0-9]+)\\b/i)[$lowercase(groups[0]) in $append($$.settings.prefix, $$.aliases.prefix)]' +
+            '.{"target": {"kind": "task", "id": $number(groups[1])}, "upsert": {"issues.linked": [{"ref": $string($$.payload.issue.number), ' +
+            '"url": $$.payload.issue.html_url, "text": "#" & $$.payload.issue.number, "state": {"status": "open"}}]}}]',
         },
         {
           when: 'headers."x-event" = "issues" and payload.action = "closed"',
@@ -362,10 +377,21 @@ export function issuesPlugin() {
       "issue-opened": issueOpened,
       "create-issue": createIssue,
       "updated-issues": updatedIssues,
+      "link-issue": linkIssue,
     },
     fields: {
       "issue.link": { name: { en: "Issue" }, kind: "link", on: ["task"] },
       "issue.state": { name: { en: "State" }, kind: "text", on: ["task"] },
+      "issues.linked": {
+        name: { en: "Linked issues" },
+        kind: "link",
+        list: true,
+        on: ["task"],
+        states: {
+          status: { name: { en: "Status" }, values: { open: { label: { en: "Open" }, tone: "positive" }, closed: { label: { en: "Closed" }, tone: "muted" } } },
+        },
+        actions: ["unlink-one"],
+      },
     },
     parts: {
       issue: {
@@ -377,6 +403,7 @@ export function issuesPlugin() {
             { type: "field", props: { field: "issue.link" } },
             { type: "value", props: { field: "issue.state" } },
             { type: "button", props: { action: "create" } },
+            { type: "text", props: { text: { en: "Name {settings.prefix}-{item.id} in an issue's title to link it." }, tone: "muted" } },
           ],
         },
       },
@@ -395,6 +422,17 @@ export function issuesPlugin() {
         admin_only: true,
         write: '$exists(held."issue.number") ? {"set": {"issue.number": null, "issue.link": null, "issue.state": null}}',
       },
+      link: {
+        name: { en: "Link an issue" },
+        endpoint: "link-issue",
+        params: ["number"],
+        on: ["task"],
+        write:
+          '{"upsert": {"issues.linked": [{"ref": $string(result.number), "url": result.url, "text": "#" & result.number & " " & result.title, "state": {"status": result.state}}]}}',
+      },
+      "unlink-one": { name: { en: "Unlink" }, on: ["task"], write: '{"remove": {"issues.linked": [element]}}' },
     },
+    settings: { prefix: { type: "string", label: { en: "Reference prefix" }, unique: true, assigned: "community_name" } },
+    help: { en: "Links issues to tasks. Name a task's reference in an issue's title, such as **acme-7**, to link it." },
   });
 }

@@ -1140,11 +1140,16 @@ describe("connections Initiative runs", () => {
     expect(messages(problems)).toContain("'{vendor.clientid}' is not a field of the vendor block");
   });
 
-  it("names a connection field the connection does not declare", () => {
+  it("names a connection field the connection does not declare, anywhere in the token's body too", () => {
     const manifest = github();
-    manifest.connections![0].token!.exchange_url = "https://api.github.com/app/{install}/t";
-    expect(messages(validateManifest(manifest))).toContain(
-      "'{install}' is not a field of this connection"
+    const token = manifest.connections![0].token!;
+    token.exchange_url = "https://api.github.com/app/{install}/t";
+    token.exchange_body = { permissions: { issues: "write" }, repositories: ["{vendor.app_slug}", "{repo}"] };
+    expect(messages(validateManifest(manifest))).toBe(
+      [
+        "/connections/0/token/exchange_url: '{install}' is not a field of this connection",
+        "/connections/0/token/exchange_body/repositories/1: '{repo}' is not a field of this connection",
+      ].join("\n")
     );
   });
 
@@ -1377,6 +1382,38 @@ describe("fields, parts and actions", () => {
     );
   });
 
+  it("asks the reader for parameters its endpoint declares, and for every one it requires", () => {
+    const manifest = viewed();
+    manifest.endpoints![0].params = [
+      { key: "url", type: "url", label: { en: "Address" }, required: true },
+      { key: "note", type: "string", label: { en: "Note" } },
+    ];
+    manifest.actions![0].params = ["url"];
+    expect(problems(manifest)).toBe("");
+    manifest.actions![0].params = ["note", "colour"];
+    expect(problems(manifest)).toBe(
+      [
+        "/actions/0/params/1: 'colour' is not a parameter of 'plugin.acme.tracker.new-link'",
+        "/actions/0/params: 'plugin.acme.tracker.new-link' requires 'url', which the action does not ask for",
+      ].join("\n")
+    );
+  });
+
+  it("fills only the item's id and the settings it declares, once each, into a part's text", () => {
+    const manifest = viewed({ type: "text", props: { text: { en: "{item.id} {settings.prefix} {settings.gone} {item.title}", de: "{settings.prefix}" } } });
+    manifest.settings = [
+      { key: "prefix", type: "string", label: { en: "Prefix" } },
+      { key: "prefix", type: "string", label: { en: "Prefix again" } },
+    ];
+    expect(problems(manifest)).toBe(
+      [
+        "/settings/1/key: 'prefix' is declared twice",
+        "/parts/0/tree/props/text/en: '{settings.gone}' names a setting this manifest does not declare",
+        "/parts/0/tree/props/text/en: '{item.title}' is not a placeholder: a part's text names '{item.id}' and '{settings.<key>}'",
+      ].join("\n")
+    );
+  });
+
   it("keeps a container's action to the write endpoint its handler answers, and takes admin_only", () => {
     const manifest = viewed();
     manifest.actions![0].admin_only = true;
@@ -1478,6 +1515,7 @@ describe("declarative plug-ins", () => {
     expect(text).toContain("/schedules/0/endpoint: a container plug-in's schedule calls its schedule hook");
     expect(text).toContain("/actions/0/write: a container plug-in's action is answered by its handler");
     expect(text).toContain("/actions/1: a container plug-in's action names the write endpoint its handler answers");
+    expect(text).toContain("/fields/2/actions: a container plug-in's action is not told which element it was run from");
   });
 
   it("refuses a container's terms in a declarative plug-in, and holds its schedules and actions to its own", () => {
@@ -1525,6 +1563,41 @@ describe("declarative plug-ins", () => {
         "/webhooks/events/2: an event row emits, writes, or both",
       ].join("\n")
     );
+  });
+
+  it("offers a list field's actions on its elements wherever the field is, and asks for params only for an endpoint", () => {
+    const manifest = declarative();
+    const linked = manifest.fields![2];
+    linked.on = ["task", "post"];
+    linked.actions = ["unlink-one", "gone"];
+    manifest.fields![1].actions = ["unlink-one"];
+    manifest.actions![3].params = ["number"];
+    expect(problems(manifest)).toBe(
+      [
+        "/actions/3/params: an action asks for its endpoint's parameters, and names no endpoint",
+        "/fields/1/actions: actions are offered on a list's elements, and this field is not a list",
+        "/fields/2/actions/0: 'unlink-one' is not offered on post, where this field is",
+        "/fields/2/actions/1: 'gone' is not declared by this manifest",
+      ].join("\n")
+    );
+  });
+
+  it("refuses states, settings and help outside the contract", () => {
+    const changes: Array<(manifest: Manifest) => void> = [
+      (manifest) => Object.assign(manifest.fields![2].states!.status.values.open, { colour: "green" }),
+      (manifest) => {
+        const facet = manifest.fields![2].states!.status;
+        manifest.fields![2].states = Object.fromEntries(Array.from({ length: CAPS.facetsPerField + 1 }, (_, index) => [`f${index}`, facet]));
+      },
+      (manifest) => (manifest.settings![0].unique = false),
+      (manifest) => (manifest.settings![0].type = "int" as never),
+      (manifest) => (manifest.help = { en: "x".repeat(CAPS.helpLength + 1) }),
+    ];
+    for (const change of changes) {
+      const manifest = declarative();
+      change(manifest);
+      expect(problems(manifest), String(change)).not.toBe("");
+    }
   });
 
   it("checks what requests and steps name", () => {

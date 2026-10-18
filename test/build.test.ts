@@ -437,7 +437,7 @@ describe("a declarative plug-in", () => {
     expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: [] });
   });
 
-  it("asks for read scopes, which its registration's ceiling holds, and refuses any other", async () => {
+  it("asks for read scopes, which its registration's ceiling holds, and refuses any other, or other plug-ins' use", async () => {
     const scoped = (scopes: string, extra = "") =>
       declarative('{"total": response.body.count}', extra).replace("hosts:", `scopes: ${scopes},\n  hosts:`);
     write({ "src/plugin.ts": scoped('["projects:read"]') });
@@ -446,11 +446,13 @@ describe("a declarative plug-in", () => {
     const listing = JSON.parse(readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8"));
     expect(listing.registration).toEqual({ kind: "declarative", scope_ceiling: ["projects:read"] });
 
-    write({ "src/plugin.ts": scoped('["projects:write"]', 'scopeCeiling: ["projects:read", "comments:write"]') });
+    const open = scoped('["projects:write"]', 'scopeCeiling: ["projects:read", "comments:write"]').replace("hosts:", "callsPlugins: true,\n  hosts:");
+    write({ "src/plugin.ts": open });
     expect(await run()).toBe(1);
     const text = errors.join("");
     expect(text).toContain("manifest/scopes/0: a declarative plug-in asks only for read scopes");
     expect(text).toContain("listing: a declarative plug-in is granted read scopes at most, not comments:write");
+    expect(text).toContain("callsPlugins: a declarative plug-in does not call Initiative, so it uses no other plug-in");
   });
 
   it("refuses an image, and a container plug-in's listing without one", async () => {
