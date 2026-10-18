@@ -16,9 +16,10 @@
  *   to retry;
  * - `{ refused }`: an `after_connect` that refused the connection.
  *
- * Every runner takes the install's `settings`, each setting's value by key, and
- * `aliases`, each unique setting's earlier values by key, which every
- * expression reads; both default to none.
+ * Every runner but {@link runExchangeBody}, whose expression reads only the
+ * connection's fields, takes the install's `settings`, each setting's value by
+ * key, and `aliases`, each unique setting's earlier values by key, which every
+ * other expression reads; both default to none.
  *
  * An action's run answers the `change` its `write` makes to the plug-in's values
  * on the item, and a schedule's or a delivery's the targeted `writes`, each held
@@ -630,6 +631,49 @@ export async function runHealth(
     }
     return { result: response.status >= 200 && response.status <= 299 ? "ok" : "unavailable" };
   });
+}
+
+/**
+ * The body Initiative posts with a connection's signed JWT, from its token's
+ * `exchange_body`: the object with each `{vendor.<key>}` in its strings filled
+ * from `vendor` and each `{<key>}` from the connection's non-secret `fields`,
+ * or the expression's answer, which reads those fields as `connection` and
+ * nothing else. It throws a TypeError where Initiative fails the token request,
+ * on a name with no value or an answer that is not an object, and for a
+ * connection with no `exchange_body`; an expression that fails throws
+ * {@link ExpressionError}.
+ */
+export async function runExchangeBody(
+  plugin: AnyPlugin,
+  connection: string,
+  call: { fields?: Record<string, unknown>; vendor?: Record<string, string> } = {}
+): Promise<Record<string, unknown>> {
+  const body = plugin.connections?.[connection]?.token?.exchange_body;
+  if (body === undefined) throw new TypeError(`'${connection}' declares no exchange_body`);
+  const fields = call.fields ?? {};
+  if (typeof body === "string") {
+    const answer = await evaluate(body, { connection: fields });
+    if (!answer || typeof answer !== "object" || Array.isArray(answer)) {
+      throw new TypeError(`exchange_body answered ${text(answer)}, which is not an object`);
+    }
+    return answer as Record<string, unknown>;
+  }
+  const filled = (value: unknown, where: string): unknown => {
+    if (typeof value === "string") {
+      return value.replace(/\{([^}]*)\}/g, (_, name: string) => {
+        const [values, key] = name.startsWith("vendor.") ? [call.vendor ?? {}, name.slice("vendor.".length)] : [fields, name];
+        const given = Object.hasOwn(values, key) ? values[key] : undefined;
+        if (given === undefined || given === null || given === "") throw new TypeError(`${where} names '{${name}}', which has no value`);
+        return text(given);
+      });
+    }
+    if (Array.isArray(value)) return value.map((child, index) => filled(child, `${where}/${index}`));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, filled(child, `${where}/${key}`)]));
+    }
+    return value;
+  };
+  return filled(body, "exchange_body") as Record<string, unknown>;
 }
 
 /** What one delivery emits, the changes it makes, and the connection state it sets. */

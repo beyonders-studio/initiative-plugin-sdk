@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CAPS, type ActorKind } from "../src/contract.js";
-import { evaluate, runAction, runAfterConnect, runEndpoint, runHealth, runSchedule, runWebhook } from "../src/testing.js";
+import { evaluate, runAction, runAfterConnect, runEndpoint, runExchangeBody, runHealth, runSchedule, runWebhook } from "../src/testing.js";
 import { issuesPlugin } from "./support/plugin.js";
 
 const plugin = issuesPlugin();
@@ -197,6 +197,47 @@ describe("runHealth", () => {
     const run = await runHealth(plugin, "workspace", { fields: { owner: "acme" }, now, responses: [response] });
     expect(run.requests[0].url).toBe("https://api.tracker.example/installations/acme");
     expect(run).toMatchObject({ result: state });
+  });
+});
+
+describe("runExchangeBody", () => {
+  /** The issues plug-in, its workspace's token minted with `exchange_body`. */
+  const minting = (exchange_body: string | Record<string, unknown>) => {
+    const changed = issuesPlugin();
+    changed.connections!.workspace.token = {
+      type: "jwt_bearer",
+      exchange_url: "https://api.tracker.example/installations/{owner}/tokens",
+      exchange_body,
+      iss: "{vendor.app_id}",
+      key: "{vendor.private_key}",
+    };
+    return changed;
+  };
+
+  it("fills the object's names from the vendor values and the connection's fields", async () => {
+    const changed = minting({ permissions: { issues: "write" }, repositories: ["{owner}/web", "{vendor.client_id}"], limit: 5 });
+    expect(await runExchangeBody(changed, "workspace", { fields: { owner: "acme" }, vendor: { client_id: "tracker" } })).toEqual({
+      permissions: { issues: "write" },
+      repositories: ["acme/web", "tracker"],
+      limit: 5,
+    });
+    await expect(runExchangeBody(changed, "workspace", { fields: { owner: "acme" } })).rejects.toThrow(
+      "exchange_body/repositories/1 names '{vendor.client_id}', which has no value"
+    );
+  });
+
+  it("answers the expression's body from the connection's fields", async () => {
+    const changed = minting('{"permissions": $merge([{"issues": "write"}, connection.account_type = "organization" ? {"members": "read"} : {}])}');
+    const body = (account_type: string) => runExchangeBody(changed, "workspace", { fields: { owner: "acme", account_type } });
+    expect(await body("organization")).toEqual({ permissions: { issues: "write", members: "read" } });
+    expect(await body("user")).toEqual({ permissions: { issues: "write" } });
+  });
+
+  it("throws on an answer that is not an object, and for a connection with no exchange_body", async () => {
+    await expect(runExchangeBody(minting("connection.owner"), "workspace", { fields: { owner: "acme" } })).rejects.toThrow(
+      "exchange_body answered acme, which is not an object"
+    );
+    await expect(runExchangeBody(plugin, "workspace")).rejects.toThrow("'workspace' declares no exchange_body");
   });
 });
 
