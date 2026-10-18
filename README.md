@@ -879,8 +879,9 @@ it("lists a repository's open issues", async () => {
     answers targeted changes from `headers`, `payload`, `connection` and
     `now`. The first row whose `when` holds applies, its emission and its
     write both.
-  - An **action** names a write `endpoint`, a `write`, or both. Initiative
-    makes the endpoint's call on the credential its `actors` say, its
+  - An **action** names an `endpoint`, a `write`, or both. The endpoint may
+    be a read, fetching what the `write` keeps, or a write that changes
+    something at the vendor. Initiative makes the endpoint's call on the credential its `actors` say, its
     expressions also reading `item` (`{kind, id, title}`), then the one change
     `write` answers from `item`, `held` (the install's values on the item),
     `result` (the endpoint's mapped answer) and `now`.

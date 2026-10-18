@@ -653,11 +653,13 @@ function referenceProblems(body: Manifest, publicId: string | undefined): Valida
     (body[block] ?? []).forEach((item, index) => checkRequires(item.requires, `/${block}/${index}/requires`));
   }
   (body.actions ?? []).forEach((action, index) => {
-    // Initiative calls an action's endpoint for the reader, and only a write
-    // does something on their behalf.
+    // Initiative calls an action's endpoint for the reader. A container's does
+    // the work, so it is a write; a declarative plug-in's `write` does the work,
+    // so its endpoint may be a read that fetches what the write keeps.
     if (action.endpoint === undefined) return;
     const named = byId.get(action.endpoint);
-    if (named?.direction !== "write") {
+    const allowed = body.service === undefined ? ["read", "write"] : ["write"];
+    if (!named || !allowed.includes(named.direction)) {
       problems.push({
         where: `/actions/${index}/endpoint`,
         message: named

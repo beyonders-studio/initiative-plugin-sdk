@@ -1134,8 +1134,10 @@ export interface Action {
    */
   name: LocalizedText;
   /**
-   * A write endpoint this manifest declares. A container plug-in's action names
-   * one; a declarative plug-in's names one, a 'write', or both.
+   * An endpoint this manifest declares. A container plug-in's action names a
+   * write, which its handler answers. A declarative plug-in's names a read or a
+   * write, a 'write' expression, or both: a read fetches what the 'write'
+   * keeps, a write changes something at the vendor.
    */
   endpoint?: NamespacedId;
   /**

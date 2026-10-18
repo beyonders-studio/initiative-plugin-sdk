@@ -1502,6 +1502,16 @@ describe("declarative plug-ins", () => {
     expect(text).toContain("/actions/1: a declarative plug-in's action names an endpoint, a write, or both");
   });
 
+  it("lets a declarative action read what its write keeps, and keeps it from an emission", () => {
+    const manifest = declarative();
+    const read = manifest.endpoints!.find((endpoint) => endpoint.direction === "read")!;
+    const emit = manifest.endpoints!.find((endpoint) => endpoint.direction === "emit")!;
+    manifest.actions![0].endpoint = read.id;
+    expect(problems(manifest)).toBe("");
+    manifest.actions![0].endpoint = emit.id;
+    expect(problems(manifest)).toBe(`/actions/0/endpoint: names '${emit.id}', which is a emit endpoint`);
+  });
+
   it("holds an event row to an emission with its map, a write, or both", () => {
     const manifest = declarative();
     const [opened, closed] = manifest.webhooks!.events!;
