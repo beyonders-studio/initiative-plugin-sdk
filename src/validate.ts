@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 
 import {
+  ACTOR_KINDS,
   CAPS,
   FEATURES,
   PLATFORM_CODES,
@@ -1157,9 +1158,12 @@ function wellFormedHost(host: string): boolean {
 
 /**
  * What a declarative plug-in's terms say: every expression parses, every request
- * names what it may, a request on a member's connection is named in the
- * endpoint's `requires`, steps read only the steps before them, every event row
- * emits a declared emission with its map, writes, or both, and each refusal
+ * names what it may, a request naming a member's connection for every call is
+ * on an endpoint whose `requires` names it and whose actors leave out the
+ * installation, a request naming a connection per actor is a write's and names
+ * one for each of the endpoint's actors (the member's interactive, the
+ * installation's static), steps read only the steps before them, every event
+ * row emits a declared emission with its map, writes, or both, and each refusal
  * names a code the endpoint has.
  */
 function declarativeProblems(body: Manifest): ValidationProblem[] {
@@ -1209,7 +1213,7 @@ function declarativeProblems(body: Manifest): ValidationProblem[] {
       push(`${where}/connection`, "carries the credential of the connection it belongs to, and names none");
     } else if (!owned && value.connection === undefined) {
       push(where, "names the connection whose credential it carries");
-    } else if (value.connection !== undefined && !connectionIds.has(value.connection)) {
+    } else if (typeof value.connection === "string" && !connectionIds.has(value.connection)) {
       push(`${where}/connection`, `'${value.connection}' is not a connection this plug-in declares`);
     }
     const paging = value.paging;
@@ -1239,22 +1243,56 @@ function declarativeProblems(body: Manifest): ValidationProblem[] {
     const where = `/endpoints/${index}`;
     const names = new Set<string>();
     // A member's own connection is resolved for the caller by `requires`, so a
-    // request carrying one names it there too.
+    // request carrying one on every call names it there too. A request naming a
+    // connection per actor carries the member's only on a call made as the
+    // member, which requires it.
     const required = new Set(Object.values(endpoint.requires ?? {}).flat());
-    const memberConnection = (value: VendorRequest, at: string) => {
+    const actorConnection = (value: VendorRequest, at: string) => {
       const named = value.connection;
-      if (named !== undefined && interactive.has(named) && !required.has(named)) {
-        push(`${at}/connection`, `its request uses the member connection '${named}', which requires does not name`);
+      if (typeof named === "string") {
+        if (!interactive.has(named)) return;
+        if (!required.has(named)) {
+          push(`${at}/connection`, `its request uses the member connection '${named}', which requires does not name`);
+        }
+        if (endpoint.actors?.includes("installation")) {
+          const instead = endpoint.direction === "write" ? ": name a connection per actor" : "";
+          push(
+            `${at}/connection`,
+            `its request uses the member connection '${named}', which a call made as the installation does not have${instead}`
+          );
+        }
+      } else if (named !== undefined) {
+        if (endpoint.direction !== "write") {
+          push(`${at}/connection`, "only a write endpoint's request names a connection per actor");
+        } else if (!endpoint.actors) {
+          push(`${at}/connection`, "names a connection per actor, and the endpoint declares no actors");
+        } else {
+          for (const actor of ACTOR_KINDS) {
+            const id = named[actor];
+            const entry = `${at}/connection/${actor}`;
+            if (id === undefined) {
+              if (endpoint.actors.includes(actor)) push(`${at}/connection`, `names no connection for '${actor}', one of the endpoint's actors`);
+            } else if (!endpoint.actors.includes(actor)) {
+              push(entry, `'${actor}' is not one of the endpoint's actors`);
+            } else if (!connectionIds.has(id)) {
+              push(entry, `'${id}' is not a connection this plug-in declares`);
+            } else if (actor === "member" && !interactive.has(id)) {
+              push(entry, `'${id}' is not an interactive connection: a call made as the member carries the member's own credential`);
+            } else if (actor === "installation" && interactive.has(id)) {
+              push(entry, `'${id}' is not a static connection: a call made as the installation carries the community's credential`);
+            }
+          }
+        }
       }
     };
     if (endpoint.request) {
       request(endpoint.request, `${where}/request`, false, names);
-      memberConnection(endpoint.request, `${where}/request`);
+      actorConnection(endpoint.request, `${where}/request`);
     }
     (endpoint.steps ?? []).forEach((step, position) => {
       const at = `${where}/steps/${position}`;
       request(step.request, `${at}/request`, false, new Set(names));
-      memberConnection(step.request, `${at}/request`);
+      actorConnection(step.request, `${at}/request`);
       if (names.has(step.name)) push(`${at}/name`, `'${step.name}' names two steps`);
       names.add(step.name);
     });

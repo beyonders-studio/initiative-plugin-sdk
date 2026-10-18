@@ -260,6 +260,7 @@ export const FIELDS = {
   vendorAuth: ["header", "prefix"],
   vendorRequest: ["method", "url", "query", "headers", "body", "graphql", "connection", "paging"],
   graphqlRequest: ["query", "variables"],
+  actorConnections: ["member", "installation"],
   requestStep: ["name", "request"],
   pageNumberPaging: ["kind", "page_param", "per_page_param", "per_page", "items", "max_pages", "on_limit"],
   linkHeaderPaging: ["kind", "items", "max_pages", "on_limit"],
@@ -1570,14 +1571,18 @@ export interface VendorRequest {
   body?: Expression;
   graphql?: GraphqlRequest;
   /**
-   * Which connection's credential the request carries: a static connection's is
-   * the community's, an interactive one's the acting member's. A call made as a
-   * member carries a static connection's credential only when the endpoint's
-   * 'requires' names that connection, and is refused otherwise. Required on an
-   * endpoint's requests. Absent on 'after_connect' and 'health', which carry
-   * the credential of the connection they belong to.
+   * Which connection's credential the request carries: one connection for every
+   * call, or, on a write endpoint's requests, one per actor
+   * ('actorConnections'), so a call made as the member carries the member's own
+   * credential and one made as the installation the community's. A static
+   * connection's credential is the community's, an interactive one's the acting
+   * member's, which a call made as the installation does not have. A call made
+   * as a member carries a static connection's credential only when the
+   * endpoint's 'requires' names that connection, and is refused otherwise.
+   * Required on an endpoint's requests. Absent on 'after_connect' and 'health',
+   * which carry the credential of the connection they belong to.
    */
-  connection?: Identifier;
+  connection?: Identifier | ActorConnections;
   paging?: Paging;
 }
 
@@ -1593,6 +1598,26 @@ export interface GraphqlRequest {
    * The variables, as an expression answering an object.
    */
   variables?: Expression;
+}
+
+/**
+ * One connection per actor, on a write endpoint's requests: a call carries the
+ * credential of the connection named for the actor it is made as. Names exactly
+ * the actors the endpoint's 'actors' declare. The member's connection need not
+ * be named in 'requires': a call made as the member requires the connection its
+ * requests name for the member.
+ */
+export interface ActorConnections {
+  /**
+   * An interactive connection, which a call made as the member carries: the
+   * member's own account.
+   */
+  member?: Identifier;
+  /**
+   * A static connection, which a call made as the installation carries: the
+   * community's own.
+   */
+  installation?: Identifier;
 }
 
 export interface RequestStep {

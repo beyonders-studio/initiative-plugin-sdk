@@ -1618,7 +1618,7 @@ describe("declarative plug-ins", () => {
     expect(text).toContain("/connections/0/health/request/connection: carries the credential of the connection it belongs to");
   });
 
-  it("refuses a request on a member connection that requires does not name", () => {
+  it("refuses a request on a member connection that requires does not name, or that a call made as the installation would carry", () => {
     const manifest = declarative();
     delete manifest.endpoints![2].requires;
     manifest.endpoints![1].steps![1].request.connection = "account";
@@ -1627,10 +1627,50 @@ describe("declarative plug-ins", () => {
       "/endpoints/2/request/connection: its request uses the member connection 'account', which requires does not name"
     );
     expect(text).toContain("/endpoints/1/steps/1/request/connection: its request uses the member connection 'account'");
+    expect(text).toContain(
+      "/endpoints/1/steps/1/request/connection: its request uses the member connection 'account', " +
+        "which a call made as the installation does not have: name a connection per actor"
+    );
 
     manifest.endpoints![2].requires = { any_of: ["workspace", "account"] };
     manifest.endpoints![1].requires = { all_of: ["account"] };
+    manifest.endpoints![1].actors = ["member"];
     expect(problems(manifest)).toBe("");
+
+    manifest.endpoints![2].actors = ["installation"];
+    expect(problems(manifest)).toBe(
+      "/endpoints/2/request/connection: its request uses the member connection 'account', which a call made as the installation does not have"
+    );
+  });
+
+  it("holds a connection per actor to a write's request, naming one of the right scope for each of the endpoint's actors", () => {
+    const manifest = declarative();
+    const [read, label, , assign, , create, , link] = manifest.endpoints!;
+    read.request!.connection = { installation: "workspace" };
+    manifest.connections![0].health!.request.connection = { installation: "workspace" };
+    label.steps![0].request.connection = { member: "account" };
+    assign.request!.connection = { member: "workspace", installation: "account" };
+    create.request!.connection = { installation: "nobody" };
+    delete link.actors;
+    link.request!.connection = { installation: "workspace" };
+    expect(problems(manifest)).toBe(
+      [
+        "/endpoints/0/request/connection: only a write endpoint's request names a connection per actor",
+        "/endpoints/1/steps/0/request/connection: names no connection for 'installation', one of the endpoint's actors",
+        "/endpoints/1/steps/0/request/connection/member: 'member' is not one of the endpoint's actors",
+        "/endpoints/3/request/connection/installation: 'account' is not a static connection: a call made as the installation carries the community's credential",
+        "/endpoints/3/request/connection/member: 'workspace' is not an interactive connection: a call made as the member carries the member's own credential",
+        "/endpoints/5/request/connection/installation: 'nobody' is not a connection this plug-in declares",
+        "/endpoints/7/request/connection: names a connection per actor, and the endpoint declares no actors",
+        "/connections/0/health/request/connection: carries the credential of the connection it belongs to, and names none",
+      ].join("\n")
+    );
+
+    const shaped = declarative();
+    shaped.endpoints![3].request!.connection = {};
+    expect(problems(shaped)).toContain("/endpoints/3/request/connection: must NOT have fewer than 1 properties");
+    shaped.endpoints![3].request!.connection = { member: "account", owner: "acme" } as never;
+    expect(problems(shaped)).toContain("/endpoints/3/request/connection/owner: 'owner' is not a term of the manifest contract");
   });
 
   it("checks paging, refusals, events and statuses", () => {
