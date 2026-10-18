@@ -799,14 +799,18 @@ function connectionProblems(body: Manifest): ValidationProblem[] {
       for (const key of ["exchange_url", "iss", "key"] as const) {
         templated.push([`${where}/token/${key}`, connection.token[key]]);
       }
-      // Every string in the body, at any depth, is rendered as the others are.
+      // Every string in an object body, at any depth, is rendered as the others
+      // are. An expression body is parsed with the other expressions instead:
+      // its braces are JSONata's.
       const strings = (value: unknown, at: string): void => {
         if (typeof value === "string") templated.push([at, value]);
         else if (value && typeof value === "object") {
           for (const [key, child] of Object.entries(value)) strings(child, `${at}/${key}`);
         }
       };
-      strings(connection.token.exchange_body, `${where}/token/exchange_body`);
+      if (typeof connection.token.exchange_body === "object") {
+        strings(connection.token.exchange_body, `${where}/token/exchange_body`);
+      }
     }
     for (const [at, value] of templated) {
       for (const name of templateNames(value ?? "")) {
@@ -1324,6 +1328,9 @@ function declarativeProblems(body: Manifest): ValidationProblem[] {
         push(at, "a refusal gives both 'refuse_when' and the 'code' it answers");
       }
     }
+    // Either kind's token may answer its body with an expression.
+    const exchange = connection.token?.exchange_body;
+    if (typeof exchange === "string") expression(exchange, `${where}/token/exchange_body`);
     const health = connection.health;
     if (health) {
       request(health.request, `${where}/health/request`, true);

@@ -1153,6 +1153,17 @@ describe("connections Initiative runs", () => {
     );
   });
 
+  it("parses a token's body given as an expression, finding no placeholder in its braces", () => {
+    const manifest = github();
+    const workspace = manifest.connections![0];
+    workspace.fields.push({ key: "account_type", type: "string", label: { en: "Type" }, managed: true });
+    workspace.token!.exchange_body =
+      '{"permissions": $merge([{"issues": "write"}, connection.account_type = "Organization" ? {"members": "read"} : {}])}';
+    expect(messages(validateManifest(manifest))).toBe("");
+    workspace.token!.exchange_body = '{"permissions": {"issues": "write"}';
+    expect(messages(validateManifest(manifest))).toMatch(/^\/connections\/0\/token\/exchange_body: does not parse: [^\n]+$/);
+  });
+
   it("insists an interactive connection has a flow", () => {
     const manifest = github();
     delete manifest.connections![1].flow;

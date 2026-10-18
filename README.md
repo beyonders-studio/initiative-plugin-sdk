@@ -306,6 +306,21 @@ token: {
 value as `{vendor.<key>}` and one of the connection's own fields as `{<key>}`;
 `validateManifest` refuses a name that neither declares.
 
+`exchange_body` may instead be an expression answering the body from
+`connection` alone, the connection's own non-secret fields, managed ones
+included, so the body can differ by connection: a vendor may refuse a token
+request naming a permission the installation does not hold. A body that names a
+vendor value stays an object. An answer that is not an object fails the token
+request, so the connection cannot be used until the expression answers one.
+`runExchangeBody` from `initiative-plugin-sdk/testing` answers the body
+Initiative posts for a connection's `fields` and `vendor` values.
+
+```ts
+// account_type is a managed field; only an organization's installation holds "members"
+exchange_body:
+  '{"permissions": $merge([{"issues": "write"}, connection.account_type = "organization" ? {"members": "read"} : {}])}',
+```
+
 ### Pages
 
 A page is one of your plug-in's screens, framed by Initiative:
@@ -1093,11 +1108,12 @@ and answers the endpoint's `result` and the `change`; `runSchedule` takes
 `since`, makes its read as the installation, and answers the endpoint's
 `result` and the `writes`;
 `runWebhook` answers a delivery's `event`, `writes` and `status`. Every runner
-takes the install's `settings` and `aliases`. A run fails when a request has no
-recorded answer left, when an answer is left over, when the map's answer does
-not fit the declared returns, or when a `write` answers what is not a change:
-one that changes a key twice, gives a list field anything but a list of
-elements, or upserts or removes elements of a field that is not a list.
+but `runExchangeBody` takes the install's `settings` and `aliases`. A run fails
+when a request has no recorded answer left, when an answer is left over, when
+the map's answer does not fit the declared returns, or when a `write` answers
+what is not a change: one that changes a key twice, gives a list field anything
+but a list of elements, or upserts or removes elements of a field that is not a
+list.
 
 ## A private plug-in
 

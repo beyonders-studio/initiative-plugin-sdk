@@ -636,9 +636,14 @@ export interface ConnectionToken {
    * A JSON body posted with the signed JWT, such as the narrower permissions a
    * token is asked for. Absent: none. A string anywhere in it may name a vendor
    * value as '{vendor.<key>}' and one of this connection's own fields as
-   * '{<key>}'.
+   * '{<key>}'. Or an expression answering the body, which reads only
+   * 'connection': this connection's own non-secret fields by key, its managed
+   * values included, as 'after_connect' stored them. A body that names a vendor
+   * value is written as an object. An answer that is not an object fails the
+   * token request, so the connection cannot be used until the expression
+   * answers one.
    */
-  exchange_body?: Record<string, unknown>;
+  exchange_body?: Record<string, unknown> | Expression;
   /**
    * The JWT's issuer, normally '{vendor.app_id}'. May name a vendor value as
    * '{vendor.<key>}' and one of this connection's own fields as '{<key>}'.
@@ -1510,9 +1515,10 @@ export interface EndpointIdentity {
  * read: {status, headers, body}, with header names in lowercase. Every
  * expression of a declarative plug-in also reads 'settings', the install's
  * settings by key, and 'aliases', each unique setting's earlier values by key,
- * as a list. Each evaluation is bounded: at most 1000 milliseconds, 500 levels
- * of nesting and an answer of 1048576 bytes as JSON. An expression that fails
- * or passes a bound answers 'unavailable: mapping-failed'.
+ * as a list, except a token's 'exchange_body', which reads only its connection.
+ * Each evaluation is bounded: at most 1000 milliseconds, 500 levels of nesting
+ * and an answer of 1048576 bytes as JSON. An expression that fails or passes a
+ * bound answers 'unavailable: mapping-failed'.
  */
 export type Expression = string;
 
