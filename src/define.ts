@@ -264,6 +264,10 @@ export interface EntitlementCall extends Call {
    * between your plug-in and billing; Initiative carries them unread.
    */
   values: Record<string, unknown>;
+  /** False when billing says the community holds nothing of the plug-in now. */
+  active: boolean;
+  /** Why, when billing says: `term_full` is a community billing gives no seat. */
+  reason: string | null;
 }
 
 /** The names of the hooks about a community's install, rather than a connection. */

@@ -22,7 +22,10 @@
  *    `version` is a whole number of one or more and `values` an object.
  *
  * Only then are `version` and `values` handed on, taken from the verified
- * claims and nothing else.
+ * claims and nothing else, with `active` and `reason` read from the values:
+ * a community billing gives no seat has `values: {"active": false, "reason":
+ * "term_full"}`. `active` is false only when `values.active` is, and `reason`
+ * is `values.reason` when it is a string.
  *
  * One gap stays, by design: `community_ref` is billing's pairwise reference,
  * which the plug-in cannot relate to the community it is told the statement is
@@ -82,6 +85,13 @@ export class EntitlementStatementError extends Error {
 export interface VerifiedEntitlement {
   version: number;
   values: Record<string, unknown>;
+  /** False when billing says the community holds nothing of the plug-in now. */
+  active: boolean;
+  /**
+   * Why, when billing says: `term_full` is a community billing gives no seat.
+   * Show "the deployment's plan is full; ask its owners" in place of working.
+   */
+  reason: string | null;
 }
 
 export interface EntitlementStatementsOptions {
@@ -163,7 +173,12 @@ export class EntitlementStatements {
     if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 || !isRecord(values)) {
       throw new EntitlementStatementError("claims");
     }
-    return { version, values };
+    return {
+      version,
+      values,
+      active: values.active !== false,
+      reason: typeof values.reason === "string" ? values.reason : null,
+    };
   }
 }
 

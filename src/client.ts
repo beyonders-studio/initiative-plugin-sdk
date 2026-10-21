@@ -208,6 +208,10 @@ export interface Entitlement {
   version: number;
   /** The statement, whole. Its keys are agreed between the plug-in and the issuer. */
   values: Record<string, unknown>;
+  /** False when billing says the community holds nothing of the plug-in now. */
+  active: boolean;
+  /** Why, when billing says: `term_full` is a community billing gives no seat. */
+  reason: string | null;
 }
 
 export interface UsageReport {
