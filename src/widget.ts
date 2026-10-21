@@ -141,8 +141,6 @@ export interface TimelineSpan {
   kind?: "bar" | "summary" | "milestone";
   baseline?: { start: number; end: number };
   caption?: string;
-  /** Names the span for a timeline's `links`. */
-  id?: string;
 }
 
 export interface TimelineLane {
@@ -161,10 +159,6 @@ export interface TimelineNode {
   end?: number;
   scale?: "day" | "week" | "month" | "quarter" | "year";
   now?: number;
-  /** Arrows from the end of the span named `from` to the start of the one
-   *  named `to`: `to` waits on `from`. A link naming no span is not drawn, and
-   *  one into a folded lane points at the nearest lane showing. */
-  links?: Array<{ from: string; to: string }>;
 }
 
 export interface FunnelNode {
