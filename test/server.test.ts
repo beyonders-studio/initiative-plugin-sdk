@@ -315,7 +315,14 @@ describe("community hooks", () => {
     const before = entitlementMetrics().statements.applied ?? 0;
     const body = { statement: statement(), version: 99, values: { monthly_allowance: null } };
     expect((await post("/v1/hooks/entitlement", body, hookToken("entitlement"))).status).toBe(204);
-    expect(seen[0].call).toMatchObject({ version: 4, values: { monthly_allowance: 30000, packs_purchased: 0 } });
+    expect(seen[0].call).toMatchObject({
+      version: 4,
+      values: { monthly_allowance: 30000, packs_purchased: 0 },
+      active: true,
+      reason: null,
+      term: null,
+      share: null,
+    });
     expect(seen[0].call).not.toHaveProperty("statement");
     expect(entitlementMetrics().statements.applied).toBe(before + 1);
     expect(warnings).toEqual([]);

@@ -22,7 +22,17 @@
  *    `version` is a whole number of one or more and `values` an object.
  *
  * Only then are `version` and `values` handed on, taken from the verified
- * claims and nothing else.
+ * claims and nothing else, with what billing says about the deployment's term:
+ *
+ * - `active` and `reason`: a community without a seat under the deployment's
+ *   term has `values: {"active": false, "reason": "term_full"}`. `active` is
+ *   false only when `values.active` is, and `reason` is `values.reason` when it
+ *   is a string;
+ * - `term`: the claim naming the registration keys in force, or null;
+ * - `share`: the claim giving the community's share of each pool, on a listing
+ *   whose statement draws on one, or null.
+ *
+ * Check what the deployment's term allows with `initiative-plugin-sdk/term`.
  *
  * One gap stays, by design: `community_ref` is billing's pairwise reference,
  * which the plug-in cannot relate to the community it is told the statement is
@@ -55,7 +65,7 @@ export type EntitlementRefusal =
   | "iss"
   /** For another plug-in's listing. */
   | "listing"
-  /** `version` or `values` missing or of the wrong type. */
+  /** `version` or `values` missing or of the wrong type, or `term` or `share` malformed. */
   | "claims";
 
 const REASONS: Record<EntitlementRefusal, string> = {
@@ -67,7 +77,7 @@ const REASONS: Record<EntitlementRefusal, string> = {
   signature: "the statement's signature does not verify under the issuer key",
   iss: `the statement is not issued by ${ENTITLEMENT_ISSUER}`,
   listing: "the statement is for another plug-in",
-  claims: "the statement's version or values are not well formed",
+  claims: "the statement's version, values, term or share are not well formed",
 };
 
 /** A refused statement: `reason` is the counted outcome, `message` says it in words. */
@@ -82,6 +92,18 @@ export class EntitlementStatementError extends Error {
 export interface VerifiedEntitlement {
   version: number;
   values: Record<string, unknown>;
+  /** False when billing says the community holds nothing of the plug-in now. */
+  active: boolean;
+  /**
+   * Why, when billing says: `term_full` is a community without a seat under
+   * the deployment's term. Show "the deployment's plan is full; ask its
+   * owners" in place of working.
+   */
+  reason: string | null;
+  /** The registration keys in force on the deployment, or null when it has none. */
+  term: string[] | null;
+  /** The community's share of each pool, by statement key, or null when it draws on none. */
+  share: Record<string, number> | null;
 }
 
 export interface EntitlementStatementsOptions {
@@ -163,7 +185,22 @@ export class EntitlementStatements {
     if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 || !isRecord(values)) {
       throw new EntitlementStatementError("claims");
     }
-    return { version, values };
+    const term = claims.term ?? null;
+    if (term !== null && !(Array.isArray(term) && term.every((id) => typeof id === "string" && id.length > 0))) {
+      throw new EntitlementStatementError("claims");
+    }
+    const share = claims.share ?? null;
+    if (share !== null && !(isRecord(share) && Object.values(share).every(isCount))) {
+      throw new EntitlementStatementError("claims");
+    }
+    return {
+      version,
+      values,
+      active: values.active !== false,
+      reason: typeof values.reason === "string" ? values.reason : null,
+      term: term as string[] | null,
+      share: share as Record<string, number> | null,
+    };
   }
 }
 
@@ -184,6 +221,10 @@ function jsonOf(part: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

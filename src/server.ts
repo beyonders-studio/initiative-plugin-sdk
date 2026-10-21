@@ -319,8 +319,11 @@ export function createPlugin(
         if (error instanceof EntitlementStatementError) return refuse(422, "statement-refused", error.reason);
         throw error;
       }
-      const { version, values } = verified;
-      return answered(() => hooks.entitlement!({ ...call, version, values }), `entitlement v${version}`);
+      const { version, values, active, reason, term, share } = verified;
+      return answered(
+        () => hooks.entitlement!({ ...call, version, values, active, reason, term, share }),
+        `entitlement v${version}`
+      );
     }
     return answered(() => hooks[name]!(call), name);
   }

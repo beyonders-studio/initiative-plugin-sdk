@@ -347,10 +347,40 @@ describe("the installation itself", () => {
       json(200, { statement: statement({ version: 5, values: { monthly_allowance: 30000 } }) })
     );
     const client = initiative().asInstallation("gapp_1");
-    expect(await client.entitlement()).toEqual({ version: 5, values: { monthly_allowance: 30000 } });
+    expect(await client.entitlement()).toEqual({
+      version: 5,
+      values: { monthly_allowance: 30000 },
+      active: true,
+      reason: null,
+      term: null,
+      share: null,
+    });
     expect(entitlementMetrics().statements.applied).toBe(before + 1);
     answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(404, { detail: "NO_ENTITLEMENT" }));
     expect(await client.entitlement()).toBeNull();
+  });
+
+  it("passes on what billing says about the term, and refuses a malformed term or share", async () => {
+    const client = initiative().asInstallation("gapp_1");
+    answers.set("GET /api/v1/plugin-platform/installation/entitlement", () =>
+      json(200, {
+        statement: statement({
+          values: { active: false, reason: "term_full" },
+          term: ["2026-acme"],
+          share: { monthly_allowance: 1000 },
+        }),
+      })
+    );
+    expect(await client.entitlement()).toMatchObject({
+      active: false,
+      reason: "term_full",
+      term: ["2026-acme"],
+      share: { monthly_allowance: 1000 },
+    });
+    for (const bad of [{ term: "2026-acme" }, { term: [""] }, { share: { runs: -1 } }, { share: ["x"] }]) {
+      answers.set("GET /api/v1/plugin-platform/installation/entitlement", () => json(200, { statement: statement(bad) }));
+      await expect(client.entitlement()).rejects.toMatchObject({ reason: "claims" });
+    }
   });
 
   it("refuses a statement that does not verify, and one that is not a statement", async () => {
