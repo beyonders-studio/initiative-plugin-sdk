@@ -210,12 +210,8 @@ export interface Entitlement {
   values: Record<string, unknown>;
   /** False when billing says the community holds nothing of the plug-in now. */
   active: boolean;
-  /** Why, when billing says: `term_full` is a community without a seat under the deployment's term. */
+  /** Why, when billing says: `term_full` is a community billing gives no seat. */
   reason: string | null;
-  /** The registration keys in force on the deployment, or null when it has none. */
-  term: string[] | null;
-  /** The community's share of each pool, by statement key, or null. */
-  share: Record<string, number> | null;
 }
 
 export interface UsageReport {

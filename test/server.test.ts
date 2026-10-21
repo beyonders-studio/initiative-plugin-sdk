@@ -320,8 +320,6 @@ describe("community hooks", () => {
       values: { monthly_allowance: 30000, packs_purchased: 0 },
       active: true,
       reason: null,
-      term: null,
-      share: null,
     });
     expect(seen[0].call).not.toHaveProperty("statement");
     expect(entitlementMetrics().statements.applied).toBe(before + 1);
