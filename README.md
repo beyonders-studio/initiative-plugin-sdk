@@ -1238,7 +1238,7 @@ either the file's version or the client is stale.
 
 | Scope | Grants |
 |---|---|
-| `projects:read`, `projects:write` | Projects and what belongs to them: tasks, statuses, checklists. |
+| `projects:read`, `projects:write` | Projects and what belongs to them: tasks, statuses, task types, checklists. |
 | `files:read`, `files:write` | Files: text documents, whiteboards, spreadsheets, links and uploads. |
 | `queues:read`, `queues:write` | Queues, their items and commands. |
 | `counter_groups:read`, `counter_groups:write` | Counter groups, their counters and commands. |
