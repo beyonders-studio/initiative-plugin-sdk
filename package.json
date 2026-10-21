@@ -22,7 +22,7 @@
     "jsonata"
   ],
   "engines": {
-    "node": ">=20.17"
+    "node": ">=20"
   },
   "exports": {
     "./manifest": {
@@ -52,10 +52,6 @@
     "./jsx-dev-runtime": {
       "types": "./dist/jsx-dev-runtime.d.ts",
       "default": "./dist/jsx-dev-runtime.js"
-    },
-    "./term": {
-      "types": "./dist/term.d.ts",
-      "default": "./dist/term.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
@@ -89,10 +85,8 @@
     "generate:plugin-api": "node scripts/generate-plugin-api.mjs"
   },
   "dependencies": {
-    "@tufjs/models": "4.1.1",
     "ajv": "^8.20.0",
-    "jsonata": "^2.2.2",
-    "tuf-js": "5.0.1"
+    "jsonata": "^2.2.2"
   },
   "peerDependencies": {
     "esbuild": ">=0.25.0"

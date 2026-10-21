@@ -16,14 +16,12 @@ holds its tokens, and builds its manifest.
 | `initiative-plugin-sdk/widget` | What a widget is handed, and the scenes it returns |
 | `initiative-plugin-sdk/parts` | The components a part's tree is built from: `Section`, `Stack`, `Field`, `Value`, `Text`, `Button` |
 | `initiative-plugin-sdk/jsx-runtime` | JSX for a part's tree, with no React |
-| `initiative-plugin-sdk/term` | The deployment's term, read from its signed package, and the check of statements against it |
-| `initiative-plugin-sdk/testing` | A declarative plug-in's requests, maps and writes, run against recorded vendor answers; a signed test package |
+| `initiative-plugin-sdk/testing` | A declarative plug-in's requests, maps and writes, run against recorded vendor answers |
 | `initiative-plugin-sdk/plugin-api.json` | The plug-in API contract: the OpenAPI document of every route a plug-in may call |
 | bin `initiative-plugin` | `init`, `build`, `pack`, `dev`, `validate`, `keygen`, `uid`, `schema` |
 
-Node 20.17 or later. Runtime dependencies: `ajv`, `jsonata`, and `tuf-js` with
-its `@tufjs/models`, which verify the deployment's package; every signature the
-SDK checks itself uses `node:crypto`. `initiative-plugin build` bundles widgets with
+Node 20 or later. Two runtime dependencies, `ajv` and `jsonata`; everything
+cryptographic uses `node:crypto`. `initiative-plugin build` bundles widgets with
 [esbuild](https://esbuild.github.io/), which you install beside the SDK:
 
 ```sh
@@ -216,19 +214,7 @@ this order, and refuses it at the first failure:
    `version` is a whole number of one or more, and `values` is an object.
 
 Only then is your hook called, with `version` and `values` taken from the
-verified claims and nothing else in the body, and what billing says about the
-deployment's term:
-
-- `active` is false only when `values.active` is, and `reason` is
-  `values.reason` when it is a string. A community without a seat under the
-  deployment's term is sent `values: {"active": false, "reason": "term_full"}`:
-  show "the deployment's plan is full; ask its owners" in place of working;
-- `term` is the `term` claim, the registration keys in force, or null;
-- `share` is the `share` claim, the community's share of each pool, or null.
-
-A `term` that isn't a list of key ids, or a `share` that isn't counts, is
-refused as `claims`. Check what the term allows with
-[`initiative-plugin-sdk/term`](#the-deployments-term). A refused statement is answered
+verified claims and nothing else in the body. A refused statement is answered
 `422 {"error": "statement-refused", "detail": "<reason>"}` and never reaches
 your hook; `client.entitlement()` throws `EntitlementStatementError`, whose
 `reason` is one of `no-key`, `bad-key`, `malformed`, `alg`, `typ`,
@@ -260,62 +246,6 @@ correctly signed statement.
 keypair and fills `INITIATIVE_ENTITLEMENT_ISSUER_KEY_PEM` for each plug-in that
 declares the fact. A deployment with no billing leaves it unset: it sends no
 statements, and any that did arrive would be refused.
-
-### The deployment's term
-
-Billing shares a deployment's term out to its communities and says so in each
-statement. Whoever holds the statement key can sign anything, so on a
-customer's own servers a paid plug-in checks the term itself, from the
-deployment's package, which only our signers can change.
-
-The package is a TUF repository the package gateway serves. Under the role
-`package` it signs:
-
-- each listing's terms, `entitlements/<listing_uid>.json`: whether it is
-  `mandatory` and its `access`. What kind of listing yours is, is the package's
-  word, read from here; the SDK never works it out from a statement or a key;
-- the deployment's registration keys, `grants/<key_id>.json`, one per purchase.
-  Your listing's entry in a key is always one shape, `{"communities",
-  "values", "plan"}`: `communities` is how many communities may hold your
-  plug-in (its seats) and `values` its pools, in your statement keys. Left out
-  or null is unlimited. The term is what the live keys add up to.
-
-```ts
-import { PackageTerm, checkTerm } from "initiative-plugin-sdk/term";
-
-const terms = new PackageTerm({
-  packageUrl: process.env.INITIATIVE_PACKAGE_URL!,
-  token: process.env.INITIATIVE_PACKAGE_TOKEN,
-});
-const term = await terms.refresh(); // hourly is plenty; a failed read keeps the last good one
-
-// Every statement you hold, in the order you first saw each community.
-const verdicts = checkTerm(term, MY_LISTING_UID, held);
-// [{ installation, honoured: true, refusal: null }, { …, honoured: false, refusal: "term_exceeded" }]
-```
-
-`readTerm` and `PackageTerm` verify the package from the root shipped in the
-SDK (`PRODUCTION_ROOT`, initiative-packages' `trust/1.root.json`), or the
-`root` you pass. Nothing the gateway serves is used until the chain above it
-verifies, and the gateway token goes only to the package's own origin.
-
-`checkTerm` honours statements first come, first served:
-
-- `no_term`: the deployment has no term (no root, no package, or no live key),
-  and nothing is honoured;
-- `not_listed`: the package has no terms for your listing, so it isn't sold
-  there;
-- `term_full`: billing gave the community no seat; `inactive`: billing says it
-  holds nothing, for its own reason. Neither takes a seat;
-- `term_exceeded`: past your seats, or a share (the statement's `share`, or
-  else its value for that pool, where unlimited never fits) that would take a
-  pool past the term.
-
-To test against a term, `buildTestPackage` from
-`initiative-plugin-sdk/testing` builds a signed package in memory, by default
-with one unlimited key. Give it `listings` (your listing's terms) and `keys`;
-pass its `root` and `fetcher` to `readTerm`. The same seed builds the same
-bytes.
 
 ### The vendor's own setup
 
