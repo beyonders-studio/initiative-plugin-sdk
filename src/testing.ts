@@ -45,6 +45,12 @@ import { evaluate, ExpressionError } from "./expression.js";
 import { definitionValidator } from "./validate.js";
 
 export { evaluate, ExpressionError, parseExpression } from "./expression.js";
+export {
+  buildTestPackage,
+  type TestKeyDocument,
+  type TestPackage,
+  type TestPackageOptions,
+} from "./term-testing.js";
 
 /** One answer the vendor gave, as a test records it. Status 200 and no headers when left out. */
 export interface RecordedResponse {
