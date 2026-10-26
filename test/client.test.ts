@@ -245,11 +245,11 @@ describe("the plug-in API", () => {
   });
 
   it("sends a form as it is, for fetch to write its boundary", async () => {
-    scope = "galleries:write";
-    answers.set("POST /api/v1/c/0/galleries/4/images", () => json(201, { id: 1 }));
+    scope = "catalogs:write";
+    answers.set("POST /api/v1/c/0/catalogs/4/items", () => json(201, { id: 1 }));
     const body = new FormData();
     body.append("file", new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }), "map.png");
-    await initiative().asInstallation("gapp_1").api.uploadGalleryImage({ path: { gallery_id: 4 }, body });
+    await initiative().asInstallation("gapp_1").api.uploadCatalogItem({ path: { catalog_id: 4 }, body });
     expect(sent.at(-1)).toMatchObject({ form: true, contentType: null });
   });
 
