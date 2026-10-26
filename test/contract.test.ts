@@ -122,7 +122,7 @@ describe("the schema draws its vocabulary from the contract", () => {
       "calendars",
       "dashboards",
       "posts",
-      "galleries",
+      "catalogs",
       "wikis",
     ];
     expect([...SCOPES]).toEqual([
