@@ -5,7 +5,7 @@
     "version": "8.1.0",
     "x-initiative-source": {
       "version": "0.77.1",
-      "commit": "4ea24fd7e4ec975f9e38d307e74695747e573543"
+      "commit": "218b2b19588fd000c72d674369246933bf184ff5"
     }
   },
   "servers": [
@@ -14920,6 +14920,18 @@
             "$ref": "#/components/schemas/FileKind",
             "description": "How the file is shown, which follows from its type.",
             "readOnly": true
+          },
+          "converts_to": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FileType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The editor's own type this uploaded file becomes when somebody\nconverts it to edit it (``POST /files/{id}/convert``), or ``None``.",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -14955,7 +14967,8 @@
           "content",
           "collection_ids",
           "content_version",
-          "kind"
+          "kind",
+          "converts_to"
         ],
         "title": "FileRead"
       },
