@@ -60,8 +60,8 @@ export const DIRECTIONS: readonly Direction[] = ["emit", "read", "write"];
 export type ActorKind = "installation" | "member";
 export const ACTOR_KINDS: readonly ActorKind[] = ["installation", "member"];
 
-export type Scope = "projects:read" | "projects:write" | "files:read" | "files:write" | "queues:read" | "queues:write" | "counter_groups:read" | "counter_groups:write" | "calendars:read" | "calendars:write" | "dashboards:read" | "dashboards:write" | "posts:read" | "posts:write" | "catalogs:read" | "catalogs:write" | "wikis:read" | "wikis:write" | "comments:read" | "comments:write" | "relationships:read" | "relationships:write" | "tags:read" | "tags:write" | "properties:read" | "properties:write" | "sharing:read" | "sharing:write" | "members:read" | "initiatives:read" | "initiatives:moderate" | "community:admin";
-export const SCOPES: readonly Scope[] = ["projects:read", "projects:write", "files:read", "files:write", "queues:read", "queues:write", "counter_groups:read", "counter_groups:write", "calendars:read", "calendars:write", "dashboards:read", "dashboards:write", "posts:read", "posts:write", "catalogs:read", "catalogs:write", "wikis:read", "wikis:write", "comments:read", "comments:write", "relationships:read", "relationships:write", "tags:read", "tags:write", "properties:read", "properties:write", "sharing:read", "sharing:write", "members:read", "initiatives:read", "initiatives:moderate", "community:admin"];
+export type Scope = "projects:read" | "projects:write" | "files:read" | "files:write" | "queues:read" | "queues:write" | "counter_groups:read" | "counter_groups:write" | "calendars:read" | "calendars:write" | "dashboards:read" | "dashboards:write" | "posts:read" | "posts:write" | "libraries:read" | "libraries:write" | "wikis:read" | "wikis:write" | "comments:read" | "comments:write" | "relationships:read" | "relationships:write" | "tags:read" | "tags:write" | "properties:read" | "properties:write" | "sharing:read" | "sharing:write" | "members:read" | "initiatives:read" | "initiatives:moderate" | "community:admin";
+export const SCOPES: readonly Scope[] = ["projects:read", "projects:write", "files:read", "files:write", "queues:read", "queues:write", "counter_groups:read", "counter_groups:write", "calendars:read", "calendars:write", "dashboards:read", "dashboards:write", "posts:read", "posts:write", "libraries:read", "libraries:write", "wikis:read", "wikis:write", "comments:read", "comments:write", "relationships:read", "relationships:write", "tags:read", "tags:write", "properties:read", "properties:write", "sharing:read", "sharing:write", "members:read", "initiatives:read", "initiatives:moderate", "community:admin"];
 
 export type SurfaceScope = "community" | "initiative";
 export const SURFACE_SCOPES: readonly SurfaceScope[] = ["community", "initiative"];
@@ -69,8 +69,8 @@ export const SURFACE_SCOPES: readonly SurfaceScope[] = ["community", "initiative
 export type PageCapability = "camera" | "clipboard-read" | "clipboard-write" | "display-capture" | "fullscreen" | "geolocation" | "microphone";
 export const PAGE_CAPABILITIES: readonly PageCapability[] = ["camera", "clipboard-read", "clipboard-write", "display-capture", "fullscreen", "geolocation", "microphone"];
 
-export type ItemKind = "task" | "calendar_event" | "queue_item" | "counter" | "catalog_item" | "post";
-export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "queue_item", "counter", "catalog_item", "post"];
+export type ItemKind = "task" | "calendar_event" | "queue_item" | "counter" | "library_item" | "post";
+export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "queue_item", "counter", "library_item", "post"];
 
 export type FieldKind = "text" | "number" | "date" | "datetime" | "link" | "badge" | "progress" | "checkbox";
 export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "datetime", "link", "badge", "progress", "checkbox"];
