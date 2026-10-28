@@ -236,6 +236,7 @@
     "authorizeParams": 12,
     "tokenLifetimeSeconds": 600,
     "selectOptions": 24,
+    "optionValueLength": 64,
     "accessHintScopes": 24,
     "requiresTerms": 10,
     "widgets": 12,
@@ -1410,8 +1411,11 @@
       ],
       "properties": {
         "value": {
-          "ref": "identifier",
-          "description": "What a value holds when it names this option. Unique among the field's options."
+          "type": "string",
+          "minLength": 1,
+          "maxLength": "optionValueLength",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_\\-]*$",
+          "description": "What a value holds when it names this option: a letter or a digit, then letters, digits, '_' and '-'. Unique among the field's options."
         },
         "label": {
           "ref": "localizedText",

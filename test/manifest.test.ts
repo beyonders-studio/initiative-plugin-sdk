@@ -1420,6 +1420,8 @@ describe("fields, parts and actions", () => {
     manifest.fields[3].options = [draft];
     delete manifest.fields[4].list;
     expect(problems(manifest)).toBe("/fields/4/options/1/value: 'draft' is declared twice");
+    manifest.fields[4].options = [{ value: "-draft", label: { en: "Draft" } }];
+    expect(problems(manifest)).toBe('/fields/4/options/0/value: must match pattern "^[A-Za-z0-9][A-Za-z0-9_\\-]*$"');
   });
 
   it("checks requires, and that an action runs a declared write", () => {

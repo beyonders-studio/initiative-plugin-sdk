@@ -432,7 +432,8 @@ fields: {
 editor's Add picker shows; `tone` is a badge's tone when its value names none
 (`accent`, `positive`, `negative`, `warning`, `neutral`, `muted`). A `currency`
 field names its ISO 4217 code in `currency`. A `select` or `multi_select` field
-lists its `options`, up to 24, each a `value` (an id, unique among them), a
+lists its `options`, up to 24, each a `value` (a letter or a digit, then up to
+63 letters, digits, `_` and `-`, unique among them), a
 `label` in the reader's language and an optional `color` as `#rrggbb`.
 
 **A list field**, `list: true`, holds several values: its value is a list of

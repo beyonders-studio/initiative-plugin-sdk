@@ -113,6 +113,7 @@ export const CAPS = {
   authorizeParams: 12,
   tokenLifetimeSeconds: 600,
   selectOptions: 24,
+  optionValueLength: 64,
   accessHintScopes: 24,
   requiresTerms: 10,
   widgets: 12,
@@ -1061,10 +1062,10 @@ export interface Field {
  */
 export interface FieldOption {
   /**
-   * What a value holds when it names this option. Unique among the field's
-   * options.
+   * What a value holds when it names this option: a letter or a digit, then
+   * letters, digits, '_' and '-'. Unique among the field's options.
    */
-  value: Identifier;
+  value: string;
   /**
    * The option's words, in the reader's language.
    */
