@@ -305,6 +305,9 @@ describe("runWebhook", () => {
     await expect(changing('"upsert": {"issues.linked": [{"url": "u"}]}')).rejects.toThrow(
       "/upsert/issues.linked/0 must have required property 'ref'"
     );
+    await expect(changing('"upsert": {"issues.linked": [{"ref": "12", "value": 3, "max": 0}]}')).rejects.toThrow(
+      "/upsert/issues.linked/0/max must be > 0"
+    );
     await expect(changing(`"remove": {"issues.linked": [$pad("", ${CAPS.metadataLookupLength + 1}, "x")]}`)).rejects.toThrow(
       `/remove/issues.linked/0 must NOT have more than ${CAPS.metadataLookupLength} characters`
     );

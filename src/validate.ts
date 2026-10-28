@@ -9,9 +9,10 @@
  * scope and fields, what a vendor `setup` writes to, the bounds, ids and
  * endpoints of `schedules`, which terms each kind's schedules, actions, fields
  * and webhook events take, the unique keys and ids of `fields`, `parts`,
- * `actions` and `settings`, what a part's nodes, a field's element actions and
- * an action's endpoint and `params` name, the placeholders in a part's text,
- * and a part's size and depth.
+ * `actions` and `settings`, the unique values of a field's `options`, what a
+ * part's nodes, a field's element actions and an action's endpoint and
+ * `params` name, the placeholders in a part's text, and a part's size and
+ * depth.
  *
  * {@link validateManifest} runs the schema and then every one of those except
  * the byte caps. It also reports every term the contract does not declare: a
@@ -947,9 +948,10 @@ function scheduleProblems(body: Manifest): ValidationProblem[] {
 }
 
 /**
- * Fields, parts, actions and settings: each declared once, every part a tree
- * Initiative can draw on every item kind it is offered on, and a list field's
- * element actions offered wherever the field is. A node or a field naming a
+ * Fields, parts, actions and settings: each declared once, as is each of a
+ * field's options, every part a tree Initiative can draw on every item kind it
+ * is offered on, and a list field's element actions offered wherever the field
+ * is. A node or a field naming a
  * field or an action that is not offered where it is would draw nothing there,
  * and a part's text names only the placeholders Initiative fills.
  */
@@ -984,6 +986,12 @@ function partProblems(body: Manifest): ValidationProblem[] {
     const where = `/fields/${index}/actions`;
     if (field.actions && !field.list) problems.push({ where, message: "actions are offered on a list's elements, and this field is not a list" });
     field.actions?.forEach((id, position) => reaches(id, actions.get(id), field.on, "field", `${where}/${position}`));
+    const values = (field.options ?? []).map((option) => option.value);
+    values.forEach((value, position) => {
+      if (values.indexOf(value) !== position) {
+        problems.push({ where: `/fields/${index}/options/${position}/value`, message: `'${value}' is declared twice` });
+      }
+    });
   });
 
   (body.parts ?? []).forEach((part, index) => {

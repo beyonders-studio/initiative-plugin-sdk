@@ -398,35 +398,59 @@ filters, sorts and exports with no call to the plug-in.
 | `datetime` | ISO 8601, with its offset |
 | `link` | `{ url, text? }` |
 | `badge` | `{ text, tone? }` |
-| `progress` | `{ value, max }` |
+| `scale` | a number from 0 to 100, or `{ value, max }` |
 | `checkbox` | a boolean |
+| `url` | an address, as a string |
+| `currency` | a number, in the field's `currency` |
+| `select` | the `value` of one of the field's `options` |
+| `multi_select` | a list of them |
+| `user_reference` | a person: the install's own reference for them |
+
+A `scale` is drawn as a number, stars or a bar. Written as `{ value, max }`, it
+is kept as value ÷ max × 100: `{ value: 3, max: 5 }` is 60. A
+`user_reference` is the `id` Initiative gives the person wherever the plug-in
+reads one, such as a task's assignees or the community's roster.
 
 ```ts
 fields: {
   "demo.link": { name: { en: "Demo" }, kind: "link", on: ["task"], description: { en: "The task's demo" } },
   "demo.opened": { name: { en: "Opened" }, kind: "number", on: ["task"] },
+  "demo.budget": { name: { en: "Budget" }, kind: "currency", currency: "EUR", on: ["task"] },
+  "demo.stage": {
+    name: { en: "Stage" },
+    kind: "select",
+    on: ["task"],
+    options: [
+      { value: "draft", label: { en: "Draft" } },
+      { value: "live", label: { en: "Live" }, color: "#2f9e44" },
+    ],
+  },
 },
 ```
 
 `on` is the item kinds it is offered on; `description` is the line the view
 editor's Add picker shows; `tone` is a badge's tone when its value names none
-(`accent`, `positive`, `negative`, `warning`, `neutral`, `muted`).
+(`accent`, `positive`, `negative`, `warning`, `neutral`, `muted`). A `currency`
+field names its ISO 4217 code in `currency`. A `select` or `multi_select` field
+lists its `options`, up to 24, each a `value` (a letter or a digit, then up to
+63 letters, digits, `_` and `-`, unique among them), a
+`label` in the reader's language and an optional `color` as `#rrggbb`.
 
 **A list field**, `list: true`, holds several values: its value is a list of
 elements, each one value of the field's `kind` with a `ref` of 1 to 255
-characters that tells it from the others. A `text`, `number`, `date`,
-`datetime` or `checkbox` element is `{ ref, value }`; a `link`, `badge` or
-`progress` element is the kind's own object with its `ref`, such as
-`{ ref, url, text? }`. Initiative keeps each element as a value of its own,
-held to the size of one value, and finds an element by its `ref`.
+characters that tells it from the others. Any kind but `multi_select`, whose
+one value is already several, may be a list. A `link` or `badge` element is the
+kind's own object with its `ref`, such as `{ ref, url, text? }`; a `scale`
+element is `{ ref, value, max? }`, out of 100 without `max`; every other kind's
+element is `{ ref, value }`. Initiative keeps each element as a value of its
+own, held to the size of one value, and finds an element by its `ref`.
 
 **States** say what state a value is in, in the plug-in's own words: up to 4
 facets, each with up to 12 keys. A value names a key of each facet it is in as
 `state`, and Initiative draws one badge per facet, labelled in the reader's
-language. A list element, and a `link`, `badge` or `progress` value, carries
-`state` beside its other properties; a `text`, `number`, `date`, `datetime` or
-`checkbox` value that carries one is written as an element is, without the
-`ref`: `{ value, state }`.
+language. A list element, and a `link`, `badge` or `{ value, max }` `scale`
+value, carries `state` beside its other properties; any other value that
+carries one is written as an element is, without the `ref`: `{ value, state }`.
 
 ```ts
 fields: {

@@ -72,8 +72,8 @@ export const PAGE_CAPABILITIES: readonly PageCapability[] = ["camera", "clipboar
 export type ItemKind = "task" | "calendar_event" | "queue_item" | "counter" | "post";
 export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "queue_item", "counter", "post"];
 
-export type FieldKind = "text" | "number" | "date" | "datetime" | "link" | "badge" | "progress" | "checkbox";
-export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "datetime", "link", "badge", "progress", "checkbox"];
+export type FieldKind = "text" | "number" | "date" | "datetime" | "link" | "badge" | "scale" | "checkbox" | "url" | "currency" | "select" | "multi_select" | "user_reference";
+export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "datetime", "link", "badge", "scale", "checkbox", "url", "currency", "select", "multi_select", "user_reference"];
 
 export type Tone = "accent" | "positive" | "negative" | "warning" | "neutral" | "muted";
 export const TONES: readonly Tone[] = ["accent", "positive", "negative", "warning", "neutral", "muted"];
@@ -113,6 +113,7 @@ export const CAPS = {
   authorizeParams: 12,
   tokenLifetimeSeconds: 600,
   selectOptions: 24,
+  optionValueLength: 64,
   accessHintScopes: 24,
   requiresTerms: 10,
   widgets: 12,
@@ -239,7 +240,8 @@ export const FIELDS = {
   endpoint: ["id", "label", "description", "returns", "group", "needs_subject", "direction", "params", "actors", "admin_only", "public", "requires", "cache_ttl_seconds", "identity", "unavailable", "request", "steps", "map", "errors"],
   widget: ["id", "meta", "module_source", "endpoints", "sample_data", "requires"],
   page: ["id", "path", "name", "scopes", "admin_only", "capabilities", "requires"],
-  field: ["key", "name", "kind", "list", "on", "description", "tone", "states", "actions", "requires"],
+  field: ["key", "name", "kind", "list", "on", "description", "tone", "currency", "options", "states", "actions", "requires"],
+  fieldOption: ["value", "label", "color"],
   stateFacet: ["name", "values"],
   stateValue: ["label", "tone"],
   sectionNode: ["type", "props", "children"],
@@ -994,8 +996,14 @@ export interface Field {
   /**
    * What the value is, and so how it is drawn: 'text' a string; 'number' a
    * number; 'date' a 'YYYY-MM-DD' string; 'datetime' an ISO 8601 string with
-   * its offset; 'link' {url, text?}; 'badge' {text, tone?}; 'progress' {value,
-   * max}; 'checkbox' a boolean.
+   * its offset; 'link' {url, text?}; 'badge' {text, tone?}; 'scale' a number
+   * from 0 to 100, or {value, max}, which Initiative keeps as value ÷ max ×
+   * 100, drawn as a number, stars or a bar; 'checkbox' a boolean; 'url' an
+   * address, as a string; 'currency' a number, an amount in the field's
+   * 'currency'; 'select' the value of one of the field's 'options';
+   * 'multi_select' a list of them; 'user_reference' a person, as the install's
+   * own reference for them: the 'id' Initiative gives the person wherever the
+   * plug-in reads one.
    */
   kind: FieldKind;
   /**
@@ -1003,7 +1011,8 @@ export interface Field {
    * value of 'kind' with a 'ref' that tells it from the others ('listElement').
    * A change gives the whole list in 'set', or adds, replaces and removes
    * elements by 'ref' with 'upsert' and 'remove'. Absent: one value, which a
-   * change sets.
+   * change sets. Every kind but 'multi_select', whose one value is already
+   * several.
    */
   list?: boolean;
   /**
@@ -1019,13 +1028,23 @@ export interface Field {
    */
   tone?: Tone;
   /**
+   * A currency field's ISO 4217 code, such as 'EUR': what its amounts are in.
+   * Required on one.
+   */
+  currency?: string;
+  /**
+   * A select or multi_select field's options, each value at most once. Required
+   * on one.
+   */
+  options?: FieldOption[];
+  /**
    * What state the value is in, as facets by id, at most 4, each with keys of
    * its own. The value names a key of each facet it is in as 'state',
    * {"<facet>": "<key>"}, and Initiative draws each as a badge, labelled in the
-   * reader's language. A list element, and a link, badge or progress value,
-   * carries 'state' beside its other properties; a text, number, date, datetime
-   * or checkbox value that carries one is written as an element is, without the
-   * 'ref': {"value": …, "state": …}.
+   * reader's language. A list element, and a link, badge or scale value written
+   * as an object, carries 'state' beside its other properties; any other value
+   * that carries one is written as an element is, without the 'ref': {"value":
+   * …, "state": …}.
    */
   states?: Record<string, StateFacet>;
   /**
@@ -1035,6 +1054,26 @@ export interface Field {
    */
   actions?: Identifier[];
   requires?: Requires;
+}
+
+/**
+ * One option of a select or multi_select field: the value a value names, and
+ * how Initiative shows it.
+ */
+export interface FieldOption {
+  /**
+   * What a value holds when it names this option: a letter or a digit, then
+   * letters, digits, '_' and '-'. Unique among the field's options.
+   */
+  value: string;
+  /**
+   * The option's words, in the reader's language.
+   */
+  label: LocalizedText;
+  /**
+   * The option's colour, as '#rrggbb'.
+   */
+  color?: string;
 }
 
 /**
@@ -1347,18 +1386,20 @@ export type ChangeTarget = {
 
 /**
  * One element of a list field's value: one value of the field's 'kind', with a
- * 'ref' that tells it from the list's others. A text, number, date, datetime or
- * checkbox element holds its value in 'value'; a link element is {ref, url,
- * text?}, a badge element {ref, text, tone?} and a progress element {ref,
- * value, max}. Initiative keeps each element as a value of its own, of at most
- * 8192 bytes as JSON. An 'upsert' may give only some of an element's
- * properties: they are merged into the element with its 'ref'.
+ * 'ref' that tells it from the list's others. A text, number, date, datetime,
+ * checkbox, url, currency, select or user_reference element holds its value in
+ * 'value'; a link element is {ref, url, text?}, a badge element {ref, text,
+ * tone?} and a scale element {ref, value, max?}. Initiative keeps each element
+ * as a value of its own, of at most 8192 bytes as JSON. An 'upsert' may give
+ * only some of an element's properties: they are merged into the element with
+ * its 'ref'.
  */
 export interface ListElement {
   ref: ElementRef;
   /**
-   * A text, number, date, datetime or checkbox element's value, or a progress
-   * element's figure.
+   * A text, number, date, datetime, checkbox, url, currency, select or
+   * user_reference element's value, or a scale element's figure: from 0 to 100,
+   * or out of its 'max'.
    */
   value?: string | number | boolean;
   /**
@@ -1374,7 +1415,8 @@ export interface ListElement {
    */
   tone?: Tone;
   /**
-   * A progress element's whole.
+   * A scale element's whole, when its figure is not already out of 100:
+   * Initiative keeps value ÷ max × 100.
    */
   max?: number;
   /**
@@ -1866,10 +1908,11 @@ export interface WebhookStatus {
  * setup writes to, whether every expression parses, what a declarative request
  * and its steps name, the bounds, ids and endpoints of schedules, which terms
  * each kind's schedules, actions, fields and webhook events take, the unique
- * keys and ids of fields, parts, actions and settings, what a part's nodes, a
- * field's element actions and an action's endpoint and params name, the
- * placeholders in a part's text, and a part's size and depth are enforced by
- * the platform on publish and are not expressible here.
+ * keys and ids of fields, parts, actions and settings, the unique values of a
+ * field's options, what a part's nodes, a field's element actions and an
+ * action's endpoint and params name, the placeholders in a part's text, and a
+ * part's size and depth are enforced by the platform on publish and are not
+ * expressible here.
  */
 export interface Manifest {
   /**
