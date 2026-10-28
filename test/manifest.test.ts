@@ -19,7 +19,7 @@ import {
   type PartNode,
 } from "../src/manifest.js";
 import { pluginDocument } from "../src/validate.js";
-import { CAPS, SCOPES } from "../src/contract.js";
+import { CAPS, FIELD_KINDS, SCOPES, type FieldKind } from "../src/contract.js";
 import { manifestOf } from "../src/define.js";
 import { issuesPlugin } from "./support/plugin.js";
 
@@ -1377,6 +1377,49 @@ describe("fields, parts and actions", () => {
       ],
     });
     expect(problems(manifest)).toBe("");
+  });
+
+  it("takes every kind, with a currency field's code and a select field's options", () => {
+    const manifest = viewed();
+    const options = [{ value: "draft", label: { en: "Draft" } }, { value: "live", label: { en: "Live" }, color: "#2f9e44" }];
+    manifest.fields = FIELD_KINDS.map((kind) => ({
+      key: `demo.${kind}`,
+      name: { en: kind },
+      kind,
+      list: kind !== "multi_select",
+      on: ["task"],
+      ...(kind === "currency" ? { currency: "EUR" } : {}),
+      ...(kind === "select" || kind === "multi_select" ? { options } : {}),
+    }));
+    manifest.parts![0].tree = field("demo.text");
+    expect(problems(manifest)).toBe("");
+  });
+
+  it("asks a currency field for its code and a select field for its options, each once, and refuses a multi_select list", () => {
+    const manifest = viewed();
+    const draft = { value: "draft", label: { en: "Draft" } };
+    manifest.fields!.push(
+      { key: "demo.budget", name: { en: "Budget" }, kind: "currency", on: ["task"] },
+      { key: "demo.stage", name: { en: "Stage" }, kind: "select", on: ["task"] },
+      { key: "demo.labels", name: { en: "Labels" }, kind: "multi_select", list: true, on: ["task"], options: [draft, draft] },
+      { key: "demo.done", name: { en: "Done" }, kind: "progress" as FieldKind, on: ["task"] }
+    );
+    expect(problems(manifest)).toBe(
+      [
+        "/fields/2: must have required property 'currency'",
+        "/fields/2: must match \"then\" schema",
+        "/fields/3: must have required property 'options'",
+        "/fields/3: must match \"then\" schema",
+        "/fields/4/list: must be equal to constant",
+        "/fields/4: must match \"then\" schema",
+        "/fields/5/kind: must be equal to one of the allowed values (text, number, date, datetime, link, badge, scale, checkbox, url, currency, select, multi_select, user_reference)",
+      ].join("\n")
+    );
+    manifest.fields = manifest.fields!.slice(0, 5);
+    manifest.fields[2].currency = "EUR";
+    manifest.fields[3].options = [draft];
+    delete manifest.fields[4].list;
+    expect(problems(manifest)).toBe("/fields/4/options/1/value: 'draft' is declared twice");
   });
 
   it("checks requires, and that an action runs a declared write", () => {
