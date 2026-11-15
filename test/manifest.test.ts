@@ -881,6 +881,23 @@ describe("min_plugin_api", () => {
   });
 });
 
+describe("availability", () => {
+  const declaring = (availability: unknown): Manifest => ({ ...base(), availability } as Manifest);
+
+  it("accepts who may use the plug-in", () => {
+    for (const availability of ["none", "beta", "operations"]) {
+      expect(validateManifest(declaring(availability)), availability).toEqual([]);
+    }
+  });
+
+  it("refuses anything else", () => {
+    for (const wrong of ["suspended", "Beta", "", null, true]) {
+      const problems = validateManifest(declaring(wrong));
+      expect(problems.map((problem) => problem.where), JSON.stringify(wrong)).toContain("/availability");
+    }
+  });
+});
+
 describe("the scopes a plug-in asks for", () => {
   const asking = (scopes: unknown) =>
     validateManifest({ ...base(), service: { public_id: "acme.tracker", scopes } } as never);

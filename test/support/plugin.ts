@@ -117,6 +117,9 @@ export function trackerPlugin() {
       community_status: async (call) => {
         record("community_status", call);
       },
+      plugin_status: async (call) => {
+        record("plugin_status", call);
+      },
       entitlement: async (call) => {
         record("entitlement", call);
       },

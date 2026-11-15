@@ -328,6 +328,19 @@ describe("community hooks", () => {
     expect(unknown).toEqual({ status: 400, body: { error: "invalid-request", detail: "not a community_status call" } });
   });
 
+  it("hands on a change of the plug-in's own state, and refuses one it does not know", async () => {
+    for (const status of ["active", "read_only", "on_hold", "deleted"]) {
+      expect((await post("/v1/hooks/plugin_status", { status }, hookToken("plugin_status"))).status).toBe(204);
+    }
+    expect(seen.map((entry) => entry.call.status)).toEqual(["active", "read_only", "on_hold", "deleted"]);
+    expect(seen[0]).toMatchObject({ name: "plugin_status", call: { installation: "gapp_1", community_status: "active" } });
+    for (const status of ["suspended", "archived", undefined]) {
+      const refused = await post("/v1/hooks/plugin_status", { status }, hookToken("plugin_status"));
+      expect(refused).toEqual({ status: 400, body: { error: "invalid-request", detail: "not a plugin_status call" } });
+    }
+    expect(seen).toHaveLength(4);
+  });
+
   it("hands on a verified statement's version and values, from its claims alone", async () => {
     const before = entitlementMetrics().statements.applied ?? 0;
     const body = { statement: statement(), version: 99, values: { monthly_allowance: null } };
@@ -410,7 +423,7 @@ describe("community hooks", () => {
 
   it("answers 404 for a community hook the plug-in does not define, so Initiative stops sending it", async () => {
     const tracker = trackerPlugin();
-    const { entitlement: _dropped, ...hooks } = tracker.plugin.hooks!;
+    const { entitlement: _dropped, plugin_status: _ignored, ...hooks } = tracker.plugin.hooks!;
     const plugin = { ...tracker.plugin, hooks };
     handler = createPlugin(plugin, {
       baseUrl: BASE,
@@ -421,6 +434,7 @@ describe("community hooks", () => {
     });
     const answer = await post("/v1/hooks/entitlement", { statement: statement() }, hookToken("entitlement"));
     expect(answer.status).toBe(404);
+    expect((await post("/v1/hooks/plugin_status", { status: "on_hold" }, hookToken("plugin_status"))).status).toBe(404);
     expect(tracker.seen).toHaveLength(0);
   });
 });
