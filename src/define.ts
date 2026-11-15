@@ -26,6 +26,7 @@ import type { CommunityStatus } from "./tokens.js";
 import type {
   Action,
   ActorKind,
+  Availability,
   PluginScope,
   BundledDashboard,
   BundledDashboardWidget,
@@ -262,6 +263,20 @@ export interface CommunityStatusCall extends Call {
 }
 
 /**
+ * The plug-in's own state in a community, as the deployment's staff or its
+ * billing service set it. A suspended plug-in is sent nothing, so `suspended`
+ * is never one.
+ */
+export const PLUGIN_STATUSES = ["active", "read_only", "on_hold", "deleted"] as const;
+export type PluginStatus = (typeof PLUGIN_STATUSES)[number];
+
+/** What `plugin_status` is sent, whenever the plug-in's own state in the community changes. */
+export interface PluginStatusCall extends Call {
+  /** The state it changed to. What to keep, pause or erase in it is the plug-in's decision. */
+  status: PluginStatus;
+}
+
+/**
  * What `entitlement` is sent: billing's statement of what this community holds
  * of the plug-in. Billing signs it, Initiative hands it on verbatim, and the
  * SDK verifies it against billing's key (the runtime fact
@@ -287,13 +302,13 @@ export interface EntitlementCall extends Call {
 }
 
 /** The names of the hooks about a community's install, rather than a connection. */
-export const COMMUNITY_HOOKS = ["installed", "uninstalled", "erase", "community_status", "entitlement"] as const;
+export const COMMUNITY_HOOKS = ["installed", "uninstalled", "erase", "community_status", "plugin_status", "entitlement"] as const;
 export type CommunityHook = (typeof COMMUNITY_HOOKS)[number];
 
 /**
  * The hooks Initiative calls while it runs connections and receives the
  * vendor's webhooks, and as a community installs, leaves, erases, changes
- * standing or changes what it holds of the plug-in.
+ * standing, changes the plug-in's state or changes what it holds of the plug-in.
  */
 export interface Hooks {
   after_connect?: (call: AfterConnectCall) => Promise<AfterConnectAnswer>;
@@ -310,6 +325,7 @@ export interface Hooks {
    */
   erase?: (call: Call) => Promise<void>;
   community_status?: (call: CommunityStatusCall) => Promise<void>;
+  plugin_status?: (call: PluginStatusCall) => Promise<void>;
   entitlement?: (call: EntitlementCall) => Promise<void>;
 }
 
@@ -550,6 +566,12 @@ export interface PluginDefinition<E, W> {
    * `listing.minAppVersion`, the oldest Initiative release it runs on.
    */
   minPluginApi?: string;
+  /**
+   * Which communities may use this version: `"none"` (the default) every
+   * community, `"beta"` the ones the deployment's owner picks, `"operations"`
+   * only the deployment's operations community.
+   */
+  availability?: Availability;
   /** The scopes it asks a community to grant. A declarative plug-in asks only for read scopes. */
   scopes?: Array<Scope | PluginScope>;
   /**
@@ -691,6 +713,7 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     default_name: plugin.name,
     ...(plugin.minimumAge ? { minimum_age: { ...plugin.minimumAge } } : {}),
     ...(plugin.minPluginApi !== undefined ? { min_plugin_api: plugin.minPluginApi } : {}),
+    ...(plugin.availability !== undefined ? { availability: plugin.availability } : {}),
     ...(plugin.hosts ? { hosts: [...plugin.hosts] } : {}),
     ...(plugin.auth ? { auth: plugin.auth } : {}),
     ...(plugin.hosts && plugin.scopes ? { scopes: [...plugin.scopes] } : {}),

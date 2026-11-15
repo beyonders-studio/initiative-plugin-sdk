@@ -161,7 +161,7 @@ delivery or a schedule is tried again.
 
 ### The community's own hooks
 
-Five hooks are about the community's install rather than a connection. Each
+Six hooks are about the community's install rather than a connection. Each
 is optional; a plug-in that defines none is answered 404, and Initiative stops
 sending that hook.
 
@@ -171,6 +171,7 @@ hooks: {
   uninstalled: async ({ installation }) => { /* keep what you hold: it may come back */ },
   erase: async ({ installation }) => { /* delete everything about this community */ },
   community_status: async ({ installation, status }) => { /* pause unless active */ },
+  plugin_status: async ({ installation, status }) => { /* your call */ },
   entitlement: async ({ installation, version, values }) => { /* keep the newest */ },
 },
 ```
@@ -186,6 +187,13 @@ hooks: {
 - `community_status` runs whenever the community's standing changes. The same
   value rides every call as `community_status`, so a missed hook is caught up
   on the next call.
+- `plugin_status` runs whenever the plug-in's own state in the community
+  changes: `active`, `read_only`, `on_hold` or `deleted`, as the deployment's
+  staff or its billing service set it. What to keep, pause, archive or erase in
+  each state is the plug-in's decision, and it may ignore any of them:
+  Initiative manages no plug-in's data. A suspended plug-in is sent nothing at
+  all, so `suspended` never arrives. Unlike `community_status`, it does not
+  ride every call.
 - `entitlement` carries billing's statement of what this community holds of
   the plug-in: `values`, whose keys are agreed between the plug-in and
   billing, and a `version` that rises with each statement. Statements can
@@ -958,6 +966,23 @@ definePlugin({ publicId: "acme.tracker", /* … */ minPluginApi: "4.1" });
 A deployment serving contract `4.3.2` runs it; one serving `4.0.5` or `5.0.0`
 does not. Leave it out and the plug-in makes no claim: it is offered on any
 contract, as listings written before the field were.
+
+`availability` says which communities may use a version:
+
+| | |
+|---|---|
+| `"none"` | Every community. The default. |
+| `"beta"` | Only the communities the deployment's owner picks. |
+| `"operations"` | Only the deployment's operations community. |
+
+```ts
+definePlugin({ publicId: "acme.tracker", /* … */ availability: "beta" });
+```
+
+It is the plug-in's own declaration, in its manifest rather than its listing,
+and like every manifest field it is per version: a release that leaves it out
+declares `"none"`. While a version is `"beta"`, the deployment's owner picks
+which communities may use it.
 
 ```sh
 npx initiative-plugin build --registry ../registry/sources

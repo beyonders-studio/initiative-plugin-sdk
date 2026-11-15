@@ -191,6 +191,22 @@ describe("the oldest plug-in API it needs", () => {
   });
 });
 
+describe("who may use it", () => {
+  it("is written as availability, after the oldest plug-in API it needs", () => {
+    const beta = manifestOf(
+      { ...plugin, minPluginApi: "4.1", availability: "beta" },
+      { "open-count": "globalThis.render = function () {};" }
+    );
+    expect(beta.availability).toBe("beta");
+    expect(Object.keys(beta).indexOf("availability")).toBe(Object.keys(beta).indexOf("min_plugin_api") + 1);
+    expect(validateManifest(beta)).toEqual([]);
+  });
+
+  it("is left out when the definition says nothing", () => {
+    expect("availability" in manifest).toBe(false);
+  });
+});
+
 describe("signing in at the plug-in's own address", () => {
   it("is written as sign_in, after the pages", () => {
     const signing = manifestOf(

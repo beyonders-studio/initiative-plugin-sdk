@@ -15,6 +15,9 @@ export const FEATURES: readonly Feature[] = ["actions", "dashboards", "endpoints
 export type Protocol = 1;
 export const PROTOCOLS: readonly Protocol[] = [1];
 
+export type Availability = "beta" | "none" | "operations";
+export const AVAILABILITIES: readonly Availability[] = ["beta", "none", "operations"];
+
 export type ConnectionScope = "interactive" | "static";
 export const CONNECTION_SCOPES: readonly ConnectionScope[] = ["interactive", "static"];
 
@@ -275,7 +278,7 @@ export const FIELDS = {
   healthState: ["status", "when", "state"],
   webhookEvent: ["when", "emit", "map", "write"],
   webhookStatus: ["when", "connection", "state"],
-  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "sign_in", "dashboards", "fields", "parts", "actions", "settings", "permissions", "help"],
+  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "availability", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "sign_in", "dashboards", "fields", "parts", "actions", "settings", "permissions", "help"],
 } as const;
 
 export type Identifier = string;
@@ -2043,6 +2046,14 @@ export interface Manifest {
    * on, this says what the plug-in calls rather than which release serves it.
    */
   min_plugin_api?: string;
+  /**
+   * Which communities may use this version of the plug-in: 'none', every
+   * community; 'beta', only the communities the deployment's owner picks;
+   * 'operations', only the deployment's operations community. Absent: 'none'.
+   * Declared per version, as every field here is: a release that leaves it out
+   * declares 'none'.
+   */
+  availability?: Availability;
   /**
    * Declarative plug-ins, which must name at least one: every host their
    * requests, paging and links may reach. A container plug-in names none.

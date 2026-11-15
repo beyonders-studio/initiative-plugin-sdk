@@ -24,6 +24,7 @@ import { Readable } from "node:stream";
 import type { ActorKind, ItemKind, Manifest } from "./contract.js";
 import {
   COMMUNITY_HOOKS,
+  PLUGIN_STATUSES,
   endpointId,
   manifestOf,
   type CommunityHook,
@@ -36,6 +37,7 @@ import {
   type Hooks,
   type ParamValue,
   type PageDeclaration,
+  type PluginStatus,
 } from "./define.js";
 import { Initiative } from "./client.js";
 import { generatePluginKeys, jwkThumbprint, loadPrivateKey, publicJwks, type PluginSigningKey } from "./keys.js";
@@ -312,6 +314,13 @@ export function createPlugin(
         return refuse(400, "invalid-request", "not a community_status call");
       }
       return answered(() => hooks.community_status!({ ...call, status: status as CommunityStatus }), "community_status");
+    }
+    if (name === "plugin_status") {
+      const status = raw.status;
+      if (!PLUGIN_STATUSES.includes(status as PluginStatus)) {
+        return refuse(400, "invalid-request", "not a plugin_status call");
+      }
+      return answered(() => hooks.plugin_status!({ ...call, status: status as PluginStatus }), "plugin_status");
     }
     if (name === "entitlement") {
       // Billing's signed statement, checked against billing's key: nothing else in the body is read.
