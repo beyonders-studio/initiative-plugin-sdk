@@ -16,6 +16,9 @@
  * schedules, actions and webhook events say in a `write` how Initiative changes
  * the values it keeps on items. One plug-in is one kind or the other.
  *
+ * A tool plug-in gives a `tool` and nothing that serves or calls: Initiative
+ * creates the tool in each community that installs it, and no code runs.
+ *
  * Endpoints are named by their key. The manifest id is `plugin.<publicId>.<key>`,
  * and everywhere a definition refers to an endpoint (a widget, a sample, a
  * parameter's `options_from`, a bundled dashboard, `communitySummary`, an
@@ -46,6 +49,7 @@ import type {
   ReturnValueType,
   Scope,
   Setting,
+  Tool,
   Vendor,
   VendorAuth,
   VendorRequest,
@@ -625,6 +629,12 @@ export interface PluginDefinition<E, W> {
   permissions?: Permission[];
   /** Help with the plug-in's parts and settings: markdown, keyed by language tag. */
   help?: Manifest["help"];
+  /**
+   * A tool plug-in's tool. Giving one makes the plug-in a tool plug-in, which
+   * runs no code: beside it the definition gives only its identity, `name`,
+   * `minimumAge`, `minPluginApi`, `availability`, `help` and `listing`.
+   */
+  tool?: Tool;
   listing?: ListingDeclaration;
 }
 
@@ -649,7 +659,8 @@ export function endpointId(plugin: { publicId: string }, name: string): string {
 
 /**
  * The manifest a definition declares: its handlers left out, its keys made
- * ids, in the contract's order. Each widget's `module_source` is taken from
+ * ids, in the contract's order. A definition giving a `tool` is a tool
+ * plug-in's, with no `service` block. Each widget's `module_source` is taken from
  * `modules` by widget id. A definition naming `hosts` is declarative: its
  * manifest has no `service` block, and its `scopes` stand at the top level.
  * A container's `callsPlugins` is its service block's `calls_plugins`.
@@ -693,13 +704,14 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     settings: listOf(plugin.settings, (key, setting) => ({ key, ...setting })),
     permissions: plugin.permissions?.length ? plugin.permissions.map((permission) => ({ ...permission })) : undefined,
     help: plugin.help,
+    tool: plugin.tool,
   };
   const present = Object.fromEntries(
     Object.entries(blocks).filter(([, value]) => value !== undefined)
   ) as Partial<Manifest>;
   return {
-    plugin_kind: "service",
-    ...(plugin.hosts
+    plugin_kind: plugin.tool ? "tool" : "service",
+    ...(plugin.hosts || plugin.tool
       ? {}
       : {
           service: {
