@@ -1309,6 +1309,128 @@ what is not a change: one that changes a key twice, gives a list field anything
 but a list of elements, or upserts or removes elements of a field that is not a
 list.
 
+## Declaring a tool
+
+A tool plug-in adds a tool to Initiative, beside projects, files and calendars.
+It runs no code: it declares the tool's rows, its items and their fields, and
+Initiative creates the tables in each community that installs it. From then on
+the tool works as a built-in tool does and is offered in every initiative. It
+is shared, trashed, archived, commented on, tagged, linked, searched and
+exported like every other tool, and has a switch and a create permission in
+each initiative, none of which it declares. Initiative builds a list and an
+item layout from the fields, and the community changes them in the layout
+editor, so a tool carries no layout either.
+
+This is Counters, declared as a tool:
+
+```ts
+import { definePlugin } from "initiative-plugin-sdk/manifest";
+
+export default definePlugin({
+  publicId: "beyonders.counters",
+  uid: "TSJVTCM0S7GV2X",
+  name: "Counters",
+  tool: {
+    key: "counter_group",
+    name: { en: "Counters" },
+    instance_name: { en: "Counter group" },
+    icon: "gauge",
+    fields: [{ key: "description", name: { en: "Description" }, kind: "text" }],
+    items: [
+      {
+        key: "counter",
+        name: { en: "Counter" },
+        fields: [
+          {
+            key: "count",
+            name: { en: "Count" },
+            kind: "counter",
+            counter: { min: "min", max: "max", step: "step", initial: "initial_count" },
+          },
+          { key: "min", name: { en: "Minimum" }, kind: "number" },
+          { key: "max", name: { en: "Maximum" }, kind: "number" },
+          { key: "step", name: { en: "Step" }, kind: "number", default: 1 },
+          { key: "initial_count", name: { en: "Starting count" }, kind: "number", default: 0 },
+          { key: "color", name: { en: "Colour" }, kind: "color" },
+          {
+            key: "view_mode",
+            name: { en: "Look" },
+            kind: "select",
+            default: "number",
+            options: [
+              { value: "number", label: { en: "Number" } },
+              { value: "progress_bar", label: { en: "Progress bar" } },
+              { value: "segmented_clock", label: { en: "Segmented clock" } },
+            ],
+          },
+        ],
+        open_while: { field: "count", below: { field: "max" } },
+      },
+    ],
+    actions: [
+      {
+        id: "reset_all",
+        name: { en: "Reset all" },
+        on: "counter_group",
+        confirm: { en: "Put every counter in this group back to its starting count?" },
+        write: '{"items": {"counter": [items.counter.{"id": id, "set": {"count": initial_count}}]}}',
+      },
+    ],
+  },
+});
+```
+
+Its manifest's `plugin_kind` is `tool` and its `features` are `["tool"]`.
+Beside the tool it carries only `default_name`, `min_plugin_api`,
+`minimum_age`, `availability` and `help`: no service, hosts, scopes,
+connections, endpoints, widgets, pages, fields, parts, actions, settings or
+permissions. Only a tool plug-in carries a `tool`.
+
+- **Keys.** The tool's key, each item's and each field's are a lower-case
+  letter, then lower-case letters, digits and `_`, at most 40 characters.
+  Initiative names the tables and columns after them. Two plug-ins may declare
+  the same tool key: Initiative tells them apart by the plug-in.
+- **Columns every row has.** `id`, `initiative_id`, `name`, `position`,
+  `created_at`, `updated_at`, `created_by`, `created_by_kind`, `deleted_at`,
+  `deleted_by`, `deleted_by_kind`, `purge_at`, `archived_at`, `held_at`,
+  `hold_id`, `listing_uid`, `listing_version`, `comments_enabled`,
+  `comments_locked_at` and `actions` (`TOOL_COLUMNS`). A field never takes one
+  of those names, nor one ending in `_id`, which is how Initiative names an
+  item's key to the row it sits under.
+- **The icon** is one name from `TOOL_ICONS`.
+- **Fields.** At most 32 on the tool's rows and on each item table. A kind is
+  one of `text`, `number`, `date`, `datetime`, `checkbox`, `url`, `currency`,
+  `select`, `multi_select`, `user_reference`, `scale`, `counter` and `color`. A
+  select or multi_select field has `options`, each value once; a currency field
+  names its `currency`; only a counter field has a `counter`. A `default` is a
+  value of the field's kind: an option's value for a select, a list of them for
+  a multi_select, `#rrggbb` for a colour. A counter starts at its `initial`, and
+  a person is never a default.
+- **A counter's `min`, `max`, `step` and `initial`** are each a number, or the
+  key of a number field of the same table, so each row holds its own bounds. A
+  number step is above 0.
+- **Items.** At most 4 item tables. An item sits under the tool's rows, or,
+  with `parent`, under another item that sits under them: two levels at most.
+  An item is deleted with the row it sits under.
+- **`open_while`** says when an item is still open. An open item blocks what it
+  is linked to until it finishes, as a task does. It names one field of the item
+  and one condition on it:
+  - a number or counter field `below`, `at_most`, `above`, `at_least`, `equals`
+    or `not_equals` a number or `{ field }`, another such field;
+  - a checkbox that `is` true or false;
+  - a select whose value is `in` a list of its options;
+  - a date or datetime that is `not_passed`.
+- **Actions.** At most 16, each run `on` the tool's rows or an item's. Initiative
+  first asks the reader for the fields `params` names, then evaluates `write`
+  and makes the change it answers (`toolChange`), under the reader's own
+  standing, so an action can do nothing the reader couldn't do by hand. `write`
+  reads `item`, the row it runs on (its `id`, `name` and fields); `items`, the
+  items directly under it, by item key; `params`; and `now`. It answers `set`,
+  values for the row's own fields, `items`, values for the items under it by
+  their `id`, or both. A null clears a field.
+
+`validateManifest` checks all of this.
+
 ## A private plug-in
 
 A deployment's owner can publish a plug-in of their own, which then sits on that
@@ -1368,7 +1490,7 @@ something the manifest declares, connection, vendor setup and schedule rules,
 what a part's nodes, a list field's element actions and an action's `params`
 name, the placeholders in a part's text, a part's size and depth, and every
 term the contract does not declare (a deployment discards those without saying
-so). The deployment also enforces byte-size caps.
+so), and a tool plug-in's terms. The deployment also enforces byte-size caps.
 
 ## The contract
 
