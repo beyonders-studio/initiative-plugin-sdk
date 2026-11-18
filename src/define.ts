@@ -721,6 +721,8 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
             ...(plugin.callsPlugins !== undefined ? { calls_plugins: plugin.callsPlugins } : {}),
           },
         }),
+    // Here rather than with the blocks below, so it stands where the contract puts it.
+    ...(plugin.tool ? { tool: plugin.tool } : {}),
     features: FEATURES.filter((feature) => present[feature] !== undefined),
     default_name: plugin.name,
     ...(plugin.minimumAge ? { minimum_age: { ...plugin.minimumAge } } : {}),
