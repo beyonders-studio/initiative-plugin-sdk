@@ -9,8 +9,8 @@
  * cannot describe a manifest the schema refuses, nor miss a term it allows.
  */
 
-export type Feature = "actions" | "dashboards" | "endpoints" | "fields" | "pages" | "parts" | "widgets";
-export const FEATURES: readonly Feature[] = ["actions", "dashboards", "endpoints", "fields", "pages", "parts", "widgets"];
+export type Feature = "actions" | "dashboards" | "endpoints" | "fields" | "pages" | "parts" | "tool" | "widgets";
+export const FEATURES: readonly Feature[] = ["actions", "dashboards", "endpoints", "fields", "pages", "parts", "tool", "widgets"];
 
 export type Protocol = 1;
 export const PROTOCOLS: readonly Protocol[] = [1];
@@ -78,6 +78,15 @@ export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "count
 export type FieldKind = "text" | "number" | "date" | "datetime" | "link" | "badge" | "scale" | "checkbox" | "url" | "currency" | "select" | "multi_select" | "user_reference";
 export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "datetime", "link", "badge", "scale", "checkbox", "url", "currency", "select", "multi_select", "user_reference"];
 
+export type ToolFieldKind = "text" | "number" | "date" | "datetime" | "checkbox" | "url" | "currency" | "select" | "multi_select" | "user_reference" | "scale" | "counter" | "color";
+export const TOOL_FIELD_KINDS: readonly ToolFieldKind[] = ["text", "number", "date", "datetime", "checkbox", "url", "currency", "select", "multi_select", "user_reference", "scale", "counter", "color"];
+
+export type ToolIcon = "beaker" | "book" | "bookmark" | "box" | "briefcase" | "calendar" | "camera" | "chart-bar" | "chart-line" | "chart-pie" | "clipboard-list" | "clock" | "dice-5" | "file-text" | "flag" | "flask-conical" | "folder" | "gauge" | "gift" | "hammer" | "heart" | "hourglass" | "image" | "inbox" | "kanban" | "layers" | "leaf" | "lightbulb" | "list" | "list-checks" | "map" | "map-pin" | "message-square" | "notebook" | "package" | "palette" | "puzzle" | "receipt" | "shield" | "shopping-cart" | "star" | "table" | "tag" | "target" | "timer" | "trophy" | "user" | "users" | "wallet" | "wrench";
+export const TOOL_ICONS: readonly ToolIcon[] = ["beaker", "book", "bookmark", "box", "briefcase", "calendar", "camera", "chart-bar", "chart-line", "chart-pie", "clipboard-list", "clock", "dice-5", "file-text", "flag", "flask-conical", "folder", "gauge", "gift", "hammer", "heart", "hourglass", "image", "inbox", "kanban", "layers", "leaf", "lightbulb", "list", "list-checks", "map", "map-pin", "message-square", "notebook", "package", "palette", "puzzle", "receipt", "shield", "shopping-cart", "star", "table", "tag", "target", "timer", "trophy", "user", "users", "wallet", "wrench"];
+
+export type ToolColumn = "id" | "initiative_id" | "name" | "position" | "created_at" | "updated_at" | "created_by" | "created_by_kind" | "deleted_at" | "deleted_by" | "deleted_by_kind" | "purge_at" | "archived_at" | "held_at" | "hold_id" | "listing_uid" | "listing_version" | "comments_enabled" | "comments_locked_at" | "actions";
+export const TOOL_COLUMNS: readonly ToolColumn[] = ["id", "initiative_id", "name", "position", "created_at", "updated_at", "created_by", "created_by_kind", "deleted_at", "deleted_by", "deleted_by_kind", "purge_at", "archived_at", "held_at", "hold_id", "listing_uid", "listing_version", "comments_enabled", "comments_locked_at", "actions"];
+
 export type Tone = "accent" | "positive" | "negative" | "warning" | "neutral" | "muted";
 export const TONES: readonly Tone[] = ["accent", "positive", "negative", "warning", "neutral", "muted"];
 
@@ -130,6 +139,9 @@ export const CAPS = {
   fields: 32,
   parts: 16,
   actions: 16,
+  toolFields: 32,
+  toolItems: 4,
+  toolActions: 16,
   permissions: 16,
   partNodes: 50,
   partDepth: 4,
@@ -152,6 +164,7 @@ export const CAPS = {
   dashboardGridColumns: 12,
   dashboardBindingParams: 12,
   identifierLength: 64,
+  toolKeyLength: 40,
   publicIdLength: 120,
   pathLength: 200,
   endpointIdLength: 200,
@@ -217,6 +230,7 @@ export const CHARSETS = {
   queryName: "-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz~",
   metadataKey: "._0123456789abcdefghijklmnopqrstuvwxyz",
   uniqueSettingValue: "0123456789abcdefghijklmnopqrstuvwxyz",
+  toolKey: "_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
 
 /**
@@ -261,6 +275,14 @@ export const FIELDS = {
   buttonNode: ["type", "props"],
   part: ["id", "name", "on", "tree", "description", "permission", "requires"],
   action: ["id", "name", "endpoint", "params", "write", "on", "confirm", "menu", "permission", "requires"],
+  tool: ["key", "name", "instance_name", "icon", "fields", "items", "actions"],
+  toolField: ["key", "name", "kind", "currency", "options", "default", "counter"],
+  toolCounter: ["min", "max", "step", "initial"],
+  toolItem: ["key", "name", "parent", "fields", "open_while"],
+  toolOpenWhile: ["field", "below", "at_most", "above", "at_least", "equals", "not_equals", "is", "in", "not_passed"],
+  toolAction: ["id", "name", "on", "params", "write", "confirm"],
+  toolChange: ["set", "items"],
+  toolItemChange: ["id", "set"],
   permission: ["id", "name", "level", "members"],
   change: ["set", "upsert", "remove"],
   targetedChange: ["target", "set", "upsert", "remove"],
@@ -283,7 +305,7 @@ export const FIELDS = {
   healthState: ["status", "when", "state"],
   webhookEvent: ["when", "emit", "map", "write"],
   webhookStatus: ["when", "connection", "state"],
-  manifest: ["plugin_kind", "service", "features", "default_name", "minimum_age", "min_plugin_api", "availability", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "sign_in", "dashboards", "fields", "parts", "actions", "settings", "permissions", "help"],
+  manifest: ["plugin_kind", "service", "tool", "features", "default_name", "minimum_age", "min_plugin_api", "availability", "hosts", "auth", "scopes", "vendor", "connections", "webhooks", "schedules", "endpoints", "community_summary", "widgets", "pages", "sign_in", "dashboards", "fields", "parts", "actions", "settings", "permissions", "help"],
 } as const;
 
 export type Identifier = string;
@@ -1463,6 +1485,274 @@ export interface Action {
 }
 
 /**
+ * The tool a tool plug-in declares. Once a community installs the plug-in, the
+ * tool works as a built-in tool does and is offered in every initiative:
+ * Initiative creates its tables in that community, and every tool's rules
+ * (sharing, trash, archive, holds, comments, tags, links, search, export, its
+ * switch and its create permission) hold for it without being declared. So a
+ * tool declares only what is its own: its key, names and icon, the fields of
+ * its own rows and of each item table, which item tables sit under which, which
+ * items stay open, and its actions. Initiative builds a default list and item
+ * layout from the fields, which the community changes in its layout editor; the
+ * tool carries no layout. Every row holds the universal columns ('toolColumn')
+ * beside the fields it declares.
+ */
+export interface Tool {
+  /**
+   * The tool's key: what its rows are called in Initiative's own names for it,
+   * such as 'counter_group'. Two plug-ins may declare the same key; Initiative
+   * tells them apart by the plug-in.
+   */
+  key: ToolKey;
+  /**
+   * The tool's name, as the sidebar and the initiative's tool switches show it:
+   * 'Counters'.
+   */
+  name: LocalizedText;
+  /**
+   * What one of its rows is called: 'Counter group'.
+   */
+  instance_name: LocalizedText;
+  /**
+   * Its icon, by name, from the list Initiative draws.
+   */
+  icon: ToolIcon;
+  /**
+   * The fields of the tool's own rows, at most 32, each key at most once.
+   * Absent: its rows hold the universal columns alone.
+   */
+  fields?: ToolField[];
+  /**
+   * The item tables under the tool's rows, at most 4, two levels deep at most:
+   * an item sits under the tool or under an item that sits under the tool. Each
+   * key at most once, and never the tool's.
+   */
+  items?: ToolItem[];
+  /**
+   * What a reader may run on the tool's rows or its items, at most 16, each id
+   * at most once.
+   */
+  actions?: ToolAction[];
+}
+
+/**
+ * A key a tool declares: a lower-case letter, then lower-case letters, digits
+ * and '_', at most 40 characters. Initiative builds table and column names from
+ * it, so a field's key is never a universal column's name ('toolColumn') and
+ * never ends in '_id', which Initiative's own keys to a parent end in.
+ */
+export type ToolKey = string;
+
+/**
+ * One field of a tool's rows or of an item table: a column of its own, typed by
+ * its kind, which Initiative draws, filters, sorts and exports as it does a
+ * property of the same kind.
+ */
+export interface ToolField {
+  /**
+   * Unique among its table's fields.
+   */
+  key: ToolKey;
+  /**
+   * The field's label.
+   */
+  name: LocalizedText;
+  /**
+   * What the value is: 'text' a string; 'number' a number; 'date' a
+   * 'YYYY-MM-DD' string; 'datetime' an ISO 8601 string with its offset;
+   * 'checkbox' a boolean; 'url' an address; 'currency' an amount in the field's
+   * 'currency'; 'select' the value of one of its 'options'; 'multi_select' a
+   * list of them; 'user_reference' a person; 'scale' a number from 0 to 100;
+   * 'counter' a number a reader steps, bounded as its 'counter' says; 'color' a
+   * colour, as '#rrggbb'.
+   */
+  kind: ToolFieldKind;
+  /**
+   * A currency field's ISO 4217 code, such as 'EUR': what its amounts are in.
+   * Required on one, and on no other kind.
+   */
+  currency?: string;
+  /**
+   * A select or multi_select field's options, each value at most once. Required
+   * on one, and on no other kind.
+   */
+  options?: FieldOption[];
+  /**
+   * The value a new row starts with, of the field's kind: a string for text,
+   * url, date, datetime and color; a number for number, currency and scale; a
+   * boolean for checkbox; an option's value for select; a list of them for
+   * multi_select. A counter starts at its 'initial', and a person is never a
+   * default. Absent: no value.
+   */
+  default?: unknown;
+  counter?: ToolCounter;
+}
+
+/**
+ * How a counter field moves: by 'step' a tap, never past 'min' or 'max', and
+ * back to 'initial' on a reset. Each is a number, or the key of a number field
+ * of the same table, so each row holds its own: {"max": "max"}. A counter
+ * field's only. Absent: a step of 1, no bounds, and 0.
+ */
+export interface ToolCounter {
+  /**
+   * The lowest it goes. Absent: no floor.
+   */
+  min?: ToolBound;
+  /**
+   * The highest it goes. Absent: no ceiling.
+   */
+  max?: ToolBound;
+  /**
+   * How far a tap moves it; a number is above 0. Absent: 1.
+   */
+  step?: ToolBound;
+  /**
+   * Where it starts and where a reset puts it. Absent: 0.
+   */
+  initial?: ToolBound;
+}
+
+/**
+ * A number, or the key of a number field of the same table, read from the row.
+ */
+export type ToolBound = number | ToolKey;
+
+/**
+ * An item table of a tool: rows that sit under one of the tool's rows, or under
+ * another item's. Each is a table of its own, deleted with the row it sits
+ * under.
+ */
+export interface ToolItem {
+  /**
+   * The item's key, unique among the tool's items and never the tool's:
+   * 'counter'.
+   */
+  key: ToolKey;
+  /**
+   * What one item is called: 'Counter'.
+   */
+  name: LocalizedText;
+  /**
+   * The key of the item it sits under, which itself sits under the tool.
+   * Absent: it sits under the tool's rows.
+   */
+  parent?: ToolKey;
+  /**
+   * Its fields, at most 32, each key at most once.
+   */
+  fields: ToolField[];
+  open_while?: ToolOpenWhile;
+}
+
+/**
+ * When an item is still open: an open item blocks what it is linked to until it
+ * finishes, as a task blocks. One field of the item and exactly one condition
+ * on it: a number or counter field compared with a number or another such field
+ * ('below', 'at_most', 'above', 'at_least', 'equals', 'not_equals'); a checkbox
+ * that 'is' true or false; a select whose value is 'in' a list of its options;
+ * or a date or datetime 'not_passed' yet. Initiative turns it into its own
+ * query. Absent: the item never blocks.
+ */
+export interface ToolOpenWhile {
+  /**
+   * The item's field the condition reads.
+   */
+  field: ToolKey;
+  below?: ToolOperand;
+  at_most?: ToolOperand;
+  above?: ToolOperand;
+  at_least?: ToolOperand;
+  equals?: ToolOperand;
+  not_equals?: ToolOperand;
+  /**
+   * A checkbox field: open while it holds this.
+   */
+  is?: boolean;
+  /**
+   * A select field: open while its value is one of these options.
+   */
+  in?: string[];
+  /**
+   * A date or datetime field: open until it passes.
+   */
+  not_passed?: true;
+}
+
+/**
+ * What a number or counter field is compared with: a number, or {"field": key},
+ * another number or counter field of the same item.
+ */
+export type ToolOperand = number | {
+  field: ToolKey;
+};
+
+/**
+ * Something a reader runs on one of the tool's rows or items, which Initiative
+ * does itself: it asks for the 'params' the action names, then makes the change
+ * 'write' answers, to the declared fields of the row it runs on and of the
+ * items directly under it, under the reader's own standing. So an action does
+ * nothing the reader could not do by hand.
+ */
+export interface ToolAction {
+  /**
+   * Unique among the tool's actions.
+   */
+  id: Identifier;
+  /**
+   * The button's or the menu entry's label.
+   */
+  name: LocalizedText;
+  /**
+   * What it runs on: the tool's key, for its rows, or an item's key.
+   */
+  on: ToolKey;
+  /**
+   * Fields of the table it runs on, by key, that Initiative asks the reader for
+   * before it runs, in a form drawn from those fields.
+   */
+  params?: ToolKey[];
+  /**
+   * The change Initiative makes, as one 'toolChange'. It reads 'item', the row
+   * it runs on: its 'id', 'name' and declared fields by key; 'items', the items
+   * directly under it, by item key, each a list of rows read as 'item' is;
+   * 'params', what the reader answered, by key; and 'now'. Answering nothing
+   * changes nothing.
+   */
+  write: Expression;
+  /**
+   * A question Initiative asks before running it. Absent: it runs at once.
+   */
+  confirm?: LocalizedText;
+}
+
+/**
+ * What a tool action's 'write' answers: values for the declared fields of the
+ * row it runs on, of the items directly under it, or both. A null clears a
+ * field. Initiative holds each value to its field's kind and makes the change
+ * as the reader, so a change the reader may not make is refused whole.
+ */
+export interface ToolChange {
+  /**
+   * Values by field key, on the row the action runs on.
+   */
+  set?: Record<string, unknown>;
+  /**
+   * Changes by item key, to items directly under the row the action runs on,
+   * each naming one by its id. An id not under it changes nothing.
+   */
+  items?: Record<string, ToolItemChange[]>;
+}
+
+/**
+ * Values for one item's declared fields, by field key.
+ */
+export interface ToolItemChange {
+  id: number;
+  set: Record<string, unknown>;
+}
+
+/**
  * Something the community decides who may do with the plug-in, at one level.
  * Inside an initiative, its roles hold it as they hold a tool's permissions,
  * and its managers and the community's admins always do. At the community
@@ -2084,8 +2374,10 @@ export interface WebhookStatus {
  * `hosts` and no service, and whose endpoints, connection checks, webhook
  * events, schedules and actions Initiative runs itself from the requests and
  * JSONata expressions written here, keeping the values they write on items; one
- * plug-in is never both. This is the 'definition' field of the document served
- * at /.well-known/initiative-plugin.json, NOT that whole document: a registrar
+ * plug-in is never both. A tool plug-in is neither: it declares one tool in its
+ * `tool` block, runs no code, and Initiative creates and serves the tool as it
+ * does its own. This is the 'definition' field of the document served at
+ * /.well-known/initiative-plugin.json, NOT that whole document: a registrar
  * also requires protocol_version, public_id and kind alongside it, and refuses
  * a definition served bare. Generated from the platform's own validator
  * vocabulary. A manifest that satisfies this schema is well-formed, not
@@ -2105,10 +2397,13 @@ export interface WebhookStatus {
  */
 export interface Manifest {
   /**
-   * The kind every plug-in manifest has, container or declarative: a
-   * declarative plug-in is one with no 'service' block.
+   * 'service' for a plug-in that serves or calls something, container or
+   * declarative: a declarative plug-in is one with no 'service' block. 'tool'
+   * for a tool plug-in, which declares one tool in its 'tool' block and runs no
+   * code: beside the tool it carries only 'features' (exactly ['tool']),
+   * 'default_name', 'min_plugin_api', 'minimum_age', 'availability' and 'help'.
    */
-  plugin_kind: "service";
+  plugin_kind: "service" | "tool";
   /**
    * A container plug-in's service, which Initiative calls. Absent for a
    * declarative plug-in, whose public id is its listing's.
@@ -2138,6 +2433,10 @@ export interface Manifest {
      */
     calls_plugins?: boolean;
   };
+  /**
+   * A tool plug-in's tool, and nothing else's.
+   */
+  tool?: Tool;
   /**
    * What this plug-in contributes. Cross-checked against the blocks present in
    * both directions: a feature with no block, or a block with no feature, is

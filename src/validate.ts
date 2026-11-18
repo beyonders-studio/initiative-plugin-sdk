@@ -14,7 +14,9 @@
  * part's nodes, a field's element actions and an action's endpoint and
  * `params` name, the permissions `permissions` declares and every page, field,
  * part, action and endpoint names, the placeholders in a part's text, and a
- * part's size and depth.
+ * part's size and depth, and a tool plug-in's terms: the blocks it may carry,
+ * its keys, what its items sit under, the kinds its fields' terms and
+ * defaults fit, what its open conditions and actions name.
  *
  * {@link validateManifest} runs the schema and then every one of those except
  * the byte caps. It also reports every term the contract does not declare: a
@@ -37,14 +39,20 @@ import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import {
   ACTOR_KINDS,
   CAPS,
+  CHARSETS,
   FEATURES,
+  FIELDS,
   PLATFORM_CODES,
+  TOOL_COLUMNS,
   type Endpoint,
   type Feature,
   type ItemKind,
   type Manifest,
   type PartNode,
   type Requires,
+  type ToolField,
+  type ToolFieldKind,
+  type ToolOperand,
   type VendorRequest,
 } from "./contract.js";
 import { ExpressionError, parseExpression } from "./expression.js";
@@ -252,8 +260,10 @@ export function validateManifest(manifest: unknown, options: { publicId?: string
     ...automationProblems(body),
     ...summaryProblems(body),
     ...measureProblems(body),
-    ...kindProblems(body),
-    ...declarativeProblems(body),
+    ...toolProblems(body),
+    // A tool plug-in is neither a container nor declarative: it carries none
+    // of the blocks those two rules read.
+    ...(body.plugin_kind === "tool" ? [] : [...kindProblems(body), ...declarativeProblems(body)]),
   ];
 }
 
@@ -1174,6 +1184,292 @@ function intervalProblems(every: string, where: string): ValidationProblem[] {
   const minutes = every.endsWith("h") ? count * 60 : count;
   if (minutes >= CAPS.scheduleMinMinutes && minutes <= CAPS.scheduleMaxMinutes) return [];
   return [{ where, message: `every is at least ${CAPS.scheduleMinMinutes}m and at most ${CAPS.scheduleMaxMinutes / 60}h` }];
+}
+
+/** What a tool plug-in carries beside its tool: it runs no code, so nothing that serves or calls. */
+const TOOL_PLUGIN_TERMS: ReadonlySet<string> = new Set([
+  "plugin_kind",
+  "tool",
+  "features",
+  "default_name",
+  "min_plugin_api",
+  "minimum_age",
+  "availability",
+  "help",
+]);
+
+/** The comparisons an open condition makes between a number or counter field and an operand. */
+const TOOL_COMPARISONS = ["below", "at_most", "above", "at_least", "equals", "not_equals"] as const;
+
+/** The field kinds a counter's bounds and a comparison read. */
+const TOOL_NUMBERS: ReadonlySet<ToolFieldKind> = new Set(["number", "counter"]);
+
+/**
+ * What is wrong with a key a tool declares, or undefined: a lower-case letter,
+ * then lower-case letters, digits and '_', at most `toolKeyLength`
+ * characters. Checked one character at a time; the schema's pattern says the
+ * same for a reader of the schema alone.
+ */
+export function toolKeyProblem(key: string): string | undefined {
+  if (key.length === 0) return "a key is not empty";
+  if (key.length > CAPS.toolKeyLength) return `a key is at most ${CAPS.toolKeyLength} characters`;
+  const first = key[0];
+  if (first < "a" || first > "z") return "a key starts with a lower-case letter";
+  for (const character of key) {
+    if (!CHARSETS.toolKey.includes(character)) {
+      return `a key holds lower-case letters, digits and '_', not '${character}'`;
+    }
+  }
+  return undefined;
+}
+
+/** Whether `value` is a 'YYYY-MM-DD' date that exists, checked one character at a time. */
+function isDate(value: string): boolean {
+  if (value.length !== 10 || value[4] !== "-" || value[7] !== "-") return false;
+  for (const at of [0, 1, 2, 3, 5, 6, 8, 9]) {
+    if (value[at] < "0" || value[at] > "9") return false;
+  }
+  const [year, month, day] = [value.slice(0, 4), value.slice(5, 7), value.slice(8, 10)].map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/** Whether `value` is an ISO 8601 date and time with its offset. */
+function isDateTime(value: string): boolean {
+  if (value[10] !== "T" || !isDate(value.slice(0, 10)) || Number.isNaN(Date.parse(value))) return false;
+  const time = value.slice(11);
+  return time.endsWith("Z") || time.includes("+") || time.includes("-");
+}
+
+/** Whether `value` is a colour as '#rrggbb'. */
+function isColor(value: string): boolean {
+  if (value.length !== 7 || value[0] !== "#") return false;
+  for (const character of value.slice(1)) {
+    if (!"0123456789abcdefABCDEF".includes(character)) return false;
+  }
+  return true;
+}
+
+/** Whether `value` is an http or https address. */
+function isAddress(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/** What is wrong with a field's default for its kind, or undefined. */
+function toolDefaultProblem(field: ToolField): string | undefined {
+  const value: unknown = field.default;
+  const options = new Set((field.options ?? []).map((option) => option.value));
+  const kind = field.kind;
+  switch (kind) {
+    case "text":
+      return typeof value === "string" ? undefined : "a text field's default is a string";
+    case "url":
+      return typeof value === "string" && isAddress(value) ? undefined : "a url field's default is an http or https address";
+    case "date":
+      return typeof value === "string" && isDate(value) ? undefined : "a date field's default is a 'YYYY-MM-DD' date";
+    case "datetime":
+      return typeof value === "string" && isDateTime(value)
+        ? undefined
+        : "a datetime field's default is an ISO 8601 date and time with its offset";
+    case "color":
+      return typeof value === "string" && isColor(value) ? undefined : "a color field's default is '#rrggbb'";
+    case "number":
+    case "currency":
+      return typeof value === "number" && Number.isFinite(value) ? undefined : `a ${kind} field's default is a number`;
+    case "scale":
+      return typeof value === "number" && value >= 0 && value <= 100
+        ? undefined
+        : "a scale field's default is a number from 0 to 100";
+    case "checkbox":
+      return typeof value === "boolean" ? undefined : "a checkbox field's default is true or false";
+    case "select":
+      return typeof value === "string" && options.has(value) ? undefined : "a select field's default is one of its options' values";
+    case "multi_select":
+      return Array.isArray(value) &&
+        new Set(value).size === value.length &&
+        value.every((entry) => typeof entry === "string" && options.has(entry))
+        ? undefined
+        : "a multi_select field's default is a list of its options' values, each at most once";
+    case "counter":
+      return "a counter field starts at its counter's 'initial', not at a default";
+    case "user_reference":
+      return "a person is never a default";
+  }
+}
+
+/**
+ * A tool plug-in's terms. It carries its tool and the listing terms beside it,
+ * and nothing that serves or calls; only a tool plug-in carries a tool. Its
+ * keys are well formed, unique where they must be, and never a universal
+ * column; its items sit under the tool or under an item that does; each
+ * field's options, currency, counter and default fit its kind; an open
+ * condition reads one of its item's fields of a kind that fits it; and every
+ * action runs on the tool or an item, asks for that table's fields, and
+ * writes an expression that parses.
+ */
+function toolProblems(body: Manifest): ValidationProblem[] {
+  const problems: ValidationProblem[] = [];
+  const push = (where: string, message: string) => problems.push({ where, message });
+
+  if (body.plugin_kind !== "tool") {
+    if (body.tool !== undefined) push("/tool", "only a tool plug-in declares a tool: its plugin_kind is 'tool'");
+    return problems;
+  }
+  for (const term of FIELDS.manifest) {
+    if (body[term] !== undefined && !TOOL_PLUGIN_TERMS.has(term)) {
+      push(
+        `/${term}`,
+        "a tool plug-in runs no code: beside its tool it carries only features, default_name, min_plugin_api, minimum_age, availability and help"
+      );
+    }
+  }
+  if (body.features.length !== 1 || body.features[0] !== "tool") {
+    push("/features", "a tool plug-in's features are exactly ['tool']");
+  }
+  const tool = body.tool;
+  if (tool === undefined) {
+    push("/tool", "a tool plug-in declares its tool");
+    return problems;
+  }
+
+  const key = (value: string, where: string) => {
+    const problem = toolKeyProblem(value);
+    if (problem) push(where, problem);
+  };
+  key(tool.key, "/tool/key");
+
+  // The tool's own rows, then each item table, with where each sits.
+  const items = tool.items ?? [];
+  const tables = new Map<string, { where: string; fields: ToolField[] }>([
+    [tool.key, { where: "/tool", fields: tool.fields ?? [] }],
+  ]);
+  items.forEach((item, index) => {
+    const where = `/tool/items/${index}`;
+    key(item.key, `${where}/key`);
+    if (item.key === tool.key) push(`${where}/key`, `'${item.key}' is the tool's key`);
+    else if (tables.has(item.key)) push(`${where}/key`, `'${item.key}' is declared twice`);
+    else tables.set(item.key, { where, fields: item.fields });
+  });
+  const parents = new Map(items.map((item) => [item.key, item.parent]));
+  items.forEach((item, index) => {
+    if (item.parent === undefined) return;
+    const where = `/tool/items/${index}/parent`;
+    if (item.parent === item.key) push(where, "an item does not sit under itself");
+    else if (!parents.has(item.parent)) {
+      push(where, `'${item.parent}' is not one of the tool's items; leave 'parent' out for an item under the tool`);
+    } else if (parents.get(item.parent) !== undefined) {
+      push(where, `'${item.parent}' sits under another item, and items go two levels deep at most`);
+    }
+  });
+
+  for (const { where, fields } of tables.values()) {
+    const byKey = new Map<string, ToolField>();
+    fields.forEach((field, index) => {
+      const at = `${where}/fields/${index}`;
+      key(field.key, `${at}/key`);
+      if ((TOOL_COLUMNS as readonly string[]).includes(field.key)) {
+        push(`${at}/key`, `'${field.key}' is a column every tool's rows have`);
+      } else if (field.key.endsWith("_id")) {
+        push(`${at}/key`, `'${field.key}' ends in '_id', as Initiative's keys to a parent do`);
+      }
+      if (byKey.has(field.key)) push(`${at}/key`, `'${field.key}' is declared twice`);
+      else byKey.set(field.key, field);
+    });
+    fields.forEach((field, index) => {
+      const at = `${where}/fields/${index}`;
+      const select = field.kind === "select" || field.kind === "multi_select";
+      if (field.options && !select) push(`${at}/options`, "only a select or multi_select field has options");
+      const values = (field.options ?? []).map((option) => option.value);
+      values.forEach((value, o) => {
+        if (values.indexOf(value) !== o) push(`${at}/options/${o}/value`, `'${value}' is an option twice`);
+      });
+      if (field.currency !== undefined && field.kind !== "currency") {
+        push(`${at}/currency`, "only a currency field names a currency");
+      }
+      if (field.counter && field.kind !== "counter") push(`${at}/counter`, "only a counter field has a counter");
+      if (field.counter && field.kind === "counter") {
+        const bounds = field.counter;
+        for (const name of ["min", "max", "step", "initial"] as const) {
+          const bound = bounds[name];
+          if (typeof bound !== "string") continue;
+          if (byKey.get(bound)?.kind !== "number") {
+            push(`${at}/counter/${name}`, `'${bound}' is not a number field of this table`);
+          }
+        }
+        if (typeof bounds.step === "number" && bounds.step <= 0) push(`${at}/counter/step`, "a step is above 0");
+        if (typeof bounds.min === "number" && typeof bounds.max === "number" && bounds.min > bounds.max) {
+          push(`${at}/counter`, "its min is above its max");
+        }
+      }
+      if (field.default !== undefined) {
+        const problem = toolDefaultProblem(field);
+        if (problem) push(`${at}/default`, problem);
+      }
+    });
+  }
+
+  items.forEach((item, index) => {
+    const condition = item.open_while;
+    if (!condition) return;
+    const where = `/tool/items/${index}/open_while`;
+    const fields = new Map(item.fields.map((field) => [field.key, field]));
+    const terms = Object.keys(condition).filter((term) => term !== "field");
+    if (terms.length !== 1) {
+      push(where, `an open condition is one condition on its field, not ${terms.map((term) => `'${term}'`).join(" and ")}`);
+      return;
+    }
+    const [term] = terms;
+    const field = fields.get(condition.field);
+    if (!field) {
+      push(`${where}/field`, `'${condition.field}' is not a field of this item`);
+      return;
+    }
+    const fits = (kinds: readonly ToolFieldKind[], what: string) => {
+      if (!kinds.includes(field.kind)) push(`${where}/${term}`, `'${term}' reads ${what}, and '${field.key}' is a ${field.kind} field`);
+    };
+    if ((TOOL_COMPARISONS as readonly string[]).includes(term)) {
+      fits([...TOOL_NUMBERS], "a number or counter field");
+      const operand = condition[term as (typeof TOOL_COMPARISONS)[number]] as ToolOperand;
+      if (typeof operand === "object" && !TOOL_NUMBERS.has(fields.get(operand.field)?.kind as ToolFieldKind)) {
+        push(`${where}/${term}/field`, `'${operand.field}' is not a number or counter field of this item`);
+      }
+    } else if (term === "is") {
+      fits(["checkbox"], "a checkbox field");
+    } else if (term === "in") {
+      fits(["select"], "a select field");
+      const options = new Set((field.options ?? []).map((option) => option.value));
+      (condition.in ?? []).forEach((value, at) => {
+        if (field.kind === "select" && !options.has(value)) push(`${where}/in/${at}`, `'${value}' is not an option of '${field.key}'`);
+      });
+    } else if (term === "not_passed") {
+      fits(["date", "datetime"], "a date or datetime field");
+    }
+  });
+
+  const actionIds = new Set<string>();
+  (tool.actions ?? []).forEach((action, index) => {
+    const where = `/tool/actions/${index}`;
+    if (actionIds.has(action.id)) push(`${where}/id`, `'${action.id}' is declared twice`);
+    actionIds.add(action.id);
+    const table = tables.get(action.on);
+    if (!table) push(`${where}/on`, `'${action.on}' is neither the tool's key nor one of its items' keys`);
+    const fields = new Set((table?.fields ?? []).map((field) => field.key));
+    (action.params ?? []).forEach((param, at) => {
+      if (table && !fields.has(param)) push(`${where}/params/${at}`, `'${param}' is not a field of '${action.on}'`);
+    });
+    try {
+      parseExpression(action.write);
+    } catch (error) {
+      const { message, position } = error as ExpressionError;
+      push(`${where}/write`, `does not parse: ${message}${position === undefined ? "" : ` (at character ${position})`}`);
+    }
+  });
+  return problems;
 }
 
 /** The endpoint terms that make it declarative. */

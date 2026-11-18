@@ -18,9 +18,10 @@ import {
   type Manifest,
   type PartNode,
 } from "../src/manifest.js";
-import { pluginDocument } from "../src/validate.js";
+import { pluginDocument, toolKeyProblem } from "../src/validate.js";
 import { CAPS, FIELD_KINDS, SCOPES, type FieldKind } from "../src/contract.js";
 import { manifestOf } from "../src/define.js";
+import { countersManifest, countersTool } from "./support/counters.js";
 import { issuesPlugin } from "./support/plugin.js";
 
 const base = (): Manifest => ({
@@ -1996,5 +1997,243 @@ describe("declarative plug-ins", () => {
     const text = problems(manifest);
     expect(text).toContain("/endpoints/1/steps: must NOT have more than 3 items");
     expect(text).toContain("/endpoints/0/request/paging/max_pages: must be <= 10");
+  });
+});
+
+describe("a tool plug-in", () => {
+  const tool = (manifest: Manifest) => manifest.tool!;
+  const counter = (manifest: Manifest) => tool(manifest).items![0];
+  const field = (manifest: Manifest, key: string) => counter(manifest).fields.find((candidate) => candidate.key === key)!;
+
+  it("accepts Counters", () => {
+    expect(messages(validateManifest(countersManifest()))).toBe("");
+  });
+
+  it("is what definePlugin builds from a definition giving a tool", () => {
+    const manifest = manifestOf({ publicId: "beyonders.counters", uid: "TSJVTCM0S7GV2X", name: "Counters", tool: countersTool() });
+    expect(manifest).toEqual(countersManifest());
+    expect(Object.keys(manifest)).toEqual(["plugin_kind", "tool", "features", "default_name"]);
+  });
+
+  it("carries nothing that serves or calls beside its tool", () => {
+    const manifest = countersManifest();
+    manifest.service = { public_id: "beyonders.counters" };
+    manifest.hosts = ["api.example.com"];
+    manifest.features = ["tool", "fields"];
+    manifest.fields = [{ key: "total", name: { en: "Total" }, kind: "number", on: ["task"] }];
+    const text = messages(validateManifest(manifest));
+    for (const term of ["service", "hosts", "fields"]) {
+      expect(text).toContain(`/${term}: a tool plug-in runs no code: beside its tool it carries only`);
+    }
+    expect(text).toContain("/features: a tool plug-in's features are exactly ['tool']");
+    // Neither a container's rules nor a declarative plug-in's are read.
+    expect(text).not.toContain("declarative");
+  });
+
+  it("is the only kind that carries a tool, and carries one", () => {
+    const service = { ...base(), features: ["tool"], tool: countersTool() } as Manifest;
+    expect(messages(validateManifest(service))).toContain("/tool: only a tool plug-in declares a tool: its plugin_kind is 'tool'");
+    const bare = countersManifest();
+    delete bare.tool;
+    expect(messages(validateManifest(bare))).toContain("/tool: a tool plug-in declares its tool");
+  });
+
+  it("checks a key one character at a time", () => {
+    expect(toolKeyProblem("counter_group")).toBeUndefined();
+    expect(toolKeyProblem("x".repeat(40))).toBeUndefined();
+    expect(toolKeyProblem("")).toBe("a key is not empty");
+    expect(toolKeyProblem("x".repeat(41))).toBe("a key is at most 40 characters");
+    expect(toolKeyProblem("_counter")).toBe("a key starts with a lower-case letter");
+    expect(toolKeyProblem("2counter")).toBe("a key starts with a lower-case letter");
+    expect(toolKeyProblem("Counter")).toBe("a key starts with a lower-case letter");
+    expect(toolKeyProblem("counter-group")).toBe("a key holds lower-case letters, digits and '_', not '-'");
+    expect(toolKeyProblem("counterGroup")).toBe("a key holds lower-case letters, digits and '_', not 'G'");
+    // The schema's pattern refuses the same keys.
+    for (const key of ["", "x".repeat(41), "_counter", "Counter", "counter-group"]) {
+      const manifest = countersManifest();
+      tool(manifest).key = key;
+      expect(validateManifest(manifest), key).not.toEqual([]);
+    }
+  });
+
+  it("refuses a field named for a universal column or a parent key", () => {
+    const manifest = countersManifest();
+    tool(manifest).fields!.push(
+      { key: "name", name: { en: "Name" }, kind: "text" },
+      { key: "position", name: { en: "Position" }, kind: "number" },
+      { key: "counter_group_id", name: { en: "Group" }, kind: "number" },
+      { key: "description", name: { en: "Again" }, kind: "text" }
+    );
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/fields/1/key: 'name' is a column every tool's rows have");
+    expect(text).toContain("/tool/fields/2/key: 'position' is a column every tool's rows have");
+    expect(text).toContain("/tool/fields/3/key: 'counter_group_id' ends in '_id', as Initiative's keys to a parent do");
+    expect(text).toContain("/tool/fields/4/key: 'description' is declared twice");
+  });
+
+  it("holds items to unique keys, two levels deep", () => {
+    const manifest = countersManifest();
+    const item = (key: string, parent?: string) => ({
+      key,
+      name: { en: key },
+      ...(parent ? { parent } : {}),
+      fields: [{ key: "note", name: { en: "Note" }, kind: "text" as const }],
+    });
+    tool(manifest).items!.push(item("tally", "counter"), item("mark", "tally"), item("counter_group"));
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/items/2/parent: 'tally' sits under another item, and items go two levels deep at most");
+    expect(text).toContain("/tool/items/3/key: 'counter_group' is the tool's key");
+    expect(text).not.toContain("/tool/items/1");
+
+    const again = countersManifest();
+    tool(again).items!.push(item("counter"), item("loop", "loop"), item("orphan", "nobody"));
+    const more = messages(validateManifest(again));
+    expect(more).toContain("/tool/items/1/key: 'counter' is declared twice");
+    expect(more).toContain("/tool/items/2/parent: an item does not sit under itself");
+    expect(more).toContain("/tool/items/3/parent: 'nobody' is not one of the tool's items");
+  });
+
+  it("fits each field's terms to its kind", () => {
+    const manifest = countersManifest();
+    field(manifest, "min").options = [{ value: "low", label: { en: "Low" } }];
+    field(manifest, "max").currency = "EUR";
+    field(manifest, "step").counter = { step: 2 };
+    field(manifest, "view_mode").options!.push({ value: "number", label: { en: "Again" } });
+    field(manifest, "count").counter = { min: "color", max: "nothing", step: 0 };
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/items/0/fields/1/options: only a select or multi_select field has options");
+    expect(text).toContain("/tool/items/0/fields/2/currency: only a currency field names a currency");
+    expect(text).toContain("/tool/items/0/fields/3/counter: only a counter field has a counter");
+    expect(text).toContain("/tool/items/0/fields/6/options/3/value: 'number' is an option twice");
+    expect(text).toContain("/tool/items/0/fields/0/counter/min: 'color' is not a number field of this table");
+    expect(text).toContain("/tool/items/0/fields/0/counter/max: 'nothing' is not a number field of this table");
+    expect(text).toContain("/tool/items/0/fields/0/counter/step: a step is above 0");
+
+    const bounds = countersManifest();
+    field(bounds, "count").counter = { min: 10, max: 1 };
+    expect(messages(validateManifest(bounds))).toContain("/tool/items/0/fields/0/counter: its min is above its max");
+  });
+
+  it("types a default by its field's kind", () => {
+    const fits: Array<[string, unknown]> = [
+      ["text", "hello"],
+      ["number", 2.5],
+      ["currency", 12],
+      ["scale", 100],
+      ["checkbox", false],
+      ["url", "https://example.com/a"],
+      ["date", "2026-02-28"],
+      ["datetime", "2026-02-28T09:30:00+13:00"],
+      ["color", "#A1b2C3"],
+    ];
+    const misfits: Array<[string, unknown, string]> = [
+      ["text", 1, "a text field's default is a string"],
+      ["number", "1", "a number field's default is a number"],
+      ["scale", 101, "a scale field's default is a number from 0 to 100"],
+      ["checkbox", "yes", "a checkbox field's default is true or false"],
+      ["url", "ftp://example.com", "a url field's default is an http or https address"],
+      ["date", "2026-02-30", "a date field's default is a 'YYYY-MM-DD' date"],
+      ["date", "2026-2-28", "a date field's default is a 'YYYY-MM-DD' date"],
+      ["datetime", "2026-02-28T09:30:00", "a datetime field's default is an ISO 8601 date and time with its offset"],
+      ["color", "#12345g", "a color field's default is '#rrggbb'"],
+      ["user_reference", "me", "a person is never a default"],
+      ["counter", 3, "a counter field starts at its counter's 'initial', not at a default"],
+    ];
+    const withDefault = (kind: string, value: unknown) => {
+      const manifest = countersManifest();
+      tool(manifest).fields = [
+        { key: "value", name: { en: "Value" }, kind, default: value, ...(kind === "currency" ? { currency: "EUR" } : {}) } as never,
+      ];
+      return messages(validateManifest(manifest));
+    };
+    for (const [kind, value] of fits) expect(withDefault(kind, value), kind).toBe("");
+    for (const [kind, value, message] of misfits) {
+      expect(withDefault(kind, value), `${kind} ${JSON.stringify(value)}`).toContain(`/tool/fields/0/default: ${message}`);
+    }
+
+    const selects = countersManifest();
+    field(selects, "view_mode").default = "dial";
+    counter(selects).fields.push({
+      key: "looks",
+      name: { en: "Looks" },
+      kind: "multi_select",
+      options: [{ value: "plain", label: { en: "Plain" } }],
+      default: ["plain", "plain"],
+    });
+    const text = messages(validateManifest(selects));
+    expect(text).toContain("/tool/items/0/fields/6/default: a select field's default is one of its options' values");
+    expect(text).toContain("/tool/items/0/fields/7/default: a multi_select field's default is a list of its options' values, each at most once");
+  });
+
+  it("reads one condition on one of the item's own fields, of a kind that fits it", () => {
+    const condition = (open_while: object) => {
+      const manifest = countersManifest();
+      counter(manifest).fields.push(
+        { key: "done", name: { en: "Done" }, kind: "checkbox" },
+        { key: "due", name: { en: "Due" }, kind: "date" },
+        { key: "label", name: { en: "Label" }, kind: "text" }
+      );
+      counter(manifest).open_while = open_while as never;
+      return messages(validateManifest(manifest));
+    };
+    const at = "/tool/items/0/open_while";
+    expect(condition({ field: "done", is: false })).toBe("");
+    expect(condition({ field: "due", not_passed: true })).toBe("");
+    expect(condition({ field: "view_mode", in: ["number", "progress_bar"] })).toBe("");
+    expect(condition({ field: "count", at_least: 0 })).toBe("");
+    expect(condition({ field: "count", below: 10, above: 0 })).toContain(
+      `${at}: an open condition is one condition on its field, not 'below' and 'above'`
+    );
+    expect(condition({ field: "total", below: 10 })).toContain(`${at}/field: 'total' is not a field of this item`);
+    expect(condition({ field: "label", below: 10 })).toContain(
+      `${at}/below: 'below' reads a number or counter field, and 'label' is a text field`
+    );
+    expect(condition({ field: "count", below: { field: "label" } })).toContain(
+      `${at}/below/field: 'label' is not a number or counter field of this item`
+    );
+    expect(condition({ field: "count", is: true })).toContain(`${at}/is: 'is' reads a checkbox field, and 'count' is a counter field`);
+    expect(condition({ field: "view_mode", in: ["dial"] })).toContain(`${at}/in/0: 'dial' is not an option of 'view_mode'`);
+    expect(condition({ field: "done", not_passed: true })).toContain(
+      `${at}/not_passed: 'not_passed' reads a date or datetime field, and 'done' is a checkbox field`
+    );
+    expect(condition({ field: "due", not_passed: false })).not.toBe("");
+  });
+
+  it("runs each action on the tool or an item, asking for that table's fields", () => {
+    const manifest = countersManifest();
+    tool(manifest).actions!.push(
+      { id: "reset_all", name: { en: "Again" }, on: "counter_group", write: "{}" },
+      { id: "nudge", name: { en: "Nudge" }, on: "tally", write: "{}" },
+      { id: "set", name: { en: "Set" }, on: "counter", params: ["count", "description"], write: '{"set": {"count": params.count}}' },
+      { id: "broken", name: { en: "Broken" }, on: "counter", write: "{" }
+    );
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/actions/1/id: 'reset_all' is declared twice");
+    expect(text).toContain("/tool/actions/2/on: 'tally' is neither the tool's key nor one of its items' keys");
+    expect(text).toContain("/tool/actions/3/params/1: 'description' is not a field of 'counter'");
+    expect(text).not.toContain("/tool/actions/3/params/0");
+    expect(text).toContain("/tool/actions/4/write: does not parse");
+  });
+
+  it("refuses a tool outside the contract", () => {
+    const changes: Array<(tool: Record<string, any>) => void> = [
+      (tool) => (tool.icon = "unicorn"),
+      (tool) => delete tool.instance_name,
+      (tool) => (tool.layout = {}),
+      (tool) => (tool.items = Array.from({ length: 5 }, (_, i) => ({ key: `item${i}`, name: { en: "I" }, fields: tool.items[0].fields }))),
+      (tool) => (tool.fields = Array.from({ length: 33 }, (_, i) => ({ key: `f${i}`, name: { en: "F" }, kind: "text" }))),
+      (tool) => (tool.fields[0].kind = "link"),
+      (tool) => (tool.fields[0] = { key: "price", name: { en: "Price" }, kind: "currency" }),
+      (tool) => (tool.items[0].fields[6].options = undefined),
+      (tool) => (tool.items[0].fields = []),
+      (tool) => (tool.items[0].open_while = { field: "count" }),
+      (tool) => delete tool.actions[0].write,
+      (tool) => (tool.actions[0].on = ["counter"]),
+    ];
+    for (const change of changes) {
+      const manifest = countersManifest();
+      change(manifest.tool as Record<string, any>);
+      expect(validateManifest(manifest), JSON.stringify(manifest.tool)).not.toEqual([]);
+    }
   });
 });
