@@ -1368,6 +1368,83 @@ describe("connections Initiative runs", () => {
     );
   });
 
+  const withCheck = (): Manifest => {
+    const manifest = github();
+    manifest.vendor!.check = {
+      sign: { iss: "{vendor.app_id}", key: "{vendor.private_key}", alg: "RS256", lifetime: 60 },
+      request: { method: "GET", url: "'https://api.github.com/app'" },
+      expect: [
+        {
+          status: "4xx",
+          holds: "false",
+          fields: ["app_id", "private_key"],
+          message: { en: "The vendor knows no client by this id and key." },
+        },
+        {
+          holds: "response.body.slug = vendor.app_slug",
+          fields: ["app_slug"],
+          message: { en: "The id and key belong to another name." },
+          shows: "response.body.slug",
+        },
+      ],
+    };
+    return manifest;
+  };
+
+  it("accepts a vendor check that signs with the vendor key and names vendor fields", () => {
+    expect(messages(validateManifest(withCheck()))).toBe("");
+  });
+
+  it("holds a vendor check to the vendor block: declared fields, a secret key, vendor values only", () => {
+    const manifest = withCheck();
+    const check = manifest.vendor!.check!;
+    check.sign!.iss = "{vendor.appid}-{owner}";
+    check.sign!.key = "{vendor.client_id}";
+    check.expect[1].fields = ["app_slugs"];
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/vendor/check/sign/iss: '{vendor.appid}' is not a field of the vendor block");
+    expect(text).toContain("/vendor/check/sign/iss: '{owner}' is not a vendor value: a check reads only the vendor block");
+    expect(text).toContain("/vendor/check/sign/key: 'client_id' signs, so it is a secret field");
+    expect(text).toContain("/vendor/check/expect/1/fields/0: 'app_slugs' is not a field of the vendor block");
+  });
+
+  it("keeps a vendor check's credential header Initiative's, and its expressions parseable", () => {
+    const manifest = withCheck();
+    const check = manifest.vendor!.check!;
+    check.sign!.key = "-----BEGIN KEY-----";
+    check.request.headers = { authorization: "'Bearer x'" };
+    check.expect[1].holds = "response.body.slug =";
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/vendor/check/sign/key: the signing key is one vendor value, '{vendor.<key>}'");
+    expect(text).toContain("/vendor/check/request/headers/authorization: the signed JWT's header is Initiative's to set");
+    expect(text).toContain("/vendor/check/expect/1/holds: does not parse");
+
+    const unsigned = withCheck();
+    delete unsigned.vendor!.check!.sign;
+    unsigned.vendor!.check!.auth = { header: "X-Token" };
+    expect(messages(validateManifest(unsigned))).toContain(
+      "/vendor/check/auth: puts the signed JWT on the request, and there is none without 'sign'"
+    );
+  });
+
+  it("refuses a vendor check outside the contract", () => {
+    const changes: Array<(check: Record<string, any>) => void> = [
+      (check) => (check.expect = []),
+      (check) => delete check.request,
+      (check) => (check.request.method = "HEAD"),
+      (check) => (check.sign.alg = "HS256"),
+      (check) => (check.sign.lifetime = 601),
+      (check) => (check.expect[0].status = "6xx"),
+      (check) => delete check.expect[1].message,
+      (check) => (check.retries = 2),
+    ];
+    for (const change of changes) {
+      const manifest = withCheck();
+      change(manifest.vendor!.check as Record<string, any>);
+      expect(validateManifest(manifest), JSON.stringify(manifest.vendor!.check)).not.toEqual([]);
+    }
+  });
+
   it("refuses a vendor setup outside the contract", () => {
     const changes: Array<(setup: Record<string, any>) => void> = [
       (setup) => (setup.kind = "gitlab_app"),

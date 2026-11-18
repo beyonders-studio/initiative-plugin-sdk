@@ -110,6 +110,7 @@ export const CAPS = {
   connections: 20,
   fieldsPerConnection: 12,
   vendorFields: 12,
+  vendorChecks: 12,
   githubAppPermissions: 100,
   githubAppEvents: 100,
   flowScopes: 24,
@@ -228,8 +229,12 @@ export const FIELDS = {
   requires: ["all_of", "any_of"],
   accessHint: ["api", "scopes"],
   connectionField: ["key", "type", "required", "label", "options", "managed"],
-  vendor: ["label", "fields", "setup"],
+  vendor: ["label", "fields", "setup", "check"],
   vendorField: ["key", "type", "required", "label"],
+  vendorCheck: ["request", "sign", "auth", "expect"],
+  vendorCheckRequest: ["method", "url", "query", "headers", "body"],
+  vendorCheckSigning: ["iss", "key", "alg", "lifetime"],
+  vendorCheckRule: ["status", "holds", "fields", "message", "shows"],
   githubAppManifestSetup: ["kind", "app", "values"],
   githubAppManifest: ["name", "url", "public", "default_permissions", "default_events"],
   endpointParam: ["key", "type", "required", "label", "options", "options_from", "list"],
@@ -353,6 +358,12 @@ export interface Vendor {
    * rather than registered by hand. Absent: the operator enters every value.
    */
   setup?: VendorSetup;
+  /**
+   * How Initiative asks the vendor, when an operator saves the vendor values,
+   * whether they name one client it knows. Absent: the values are saved as they
+   * are typed.
+   */
+  check?: VendorCheck;
 }
 
 export interface VendorField {
@@ -366,6 +377,114 @@ export interface VendorField {
    */
   required?: boolean;
   label: LocalizedText;
+}
+
+/**
+ * A call Initiative makes to the vendor when an operator saves the vendor
+ * values, before they are written, to learn whether they name one client the
+ * vendor knows. An answer an 'expect' row refuses keeps the values from being
+ * written: the operator's form marks that row's fields and shows its message.
+ * When the vendor cannot be reached, an expression fails, or the answer is not
+ * 2xx and no row applies to it, the values are written and the form says the
+ * check could not run. It runs when a save sets a vendor value the check reads,
+ * as typed on the form or written by the vendor's setup.
+ */
+export interface VendorCheck {
+  request: VendorCheckRequest;
+  sign?: VendorCheckSigning;
+  /**
+   * How the signed JWT is put on the request. Absent: 'Authorization: Bearer
+   * <jwt>'. Only beside 'sign'.
+   */
+  auth?: VendorAuth;
+  /**
+   * Tried in order. A row applies to an answer its 'status' matches and refuses
+   * it when its 'holds' does not answer true; the first row that refuses
+   * decides. An answer no row refuses is accepted.
+   */
+  expect: VendorCheckRule[];
+}
+
+/**
+ * The call a vendor check makes: https, and on one of the plug-in's hosts when
+ * it names hosts. It carries no connection's credential: with 'sign', the
+ * check's own signed JWT, and otherwise none.
+ */
+export interface VendorCheckRequest {
+  method: HttpMethod;
+  /**
+   * The address, as an expression answering a string. Query parameters may be
+   * written into it or given in 'query'.
+   */
+  url: Expression;
+  /**
+   * Query parameters by name, each an expression. One answering null or nothing
+   * is left out, and a list repeats the parameter once per value.
+   */
+  query?: Record<string, Expression>;
+  /**
+   * Headers by name, each an expression answering a string; one answering null
+   * or nothing is left out. Never the header the signed JWT is put in.
+   */
+  headers?: Record<string, Expression>;
+  /**
+   * The JSON body, as an expression.
+   */
+  body?: Expression;
+}
+
+/**
+ * A JWT Initiative signs with a vendor value and sends as the check's
+ * credential, for a vendor that knows its client by such a JWT. Nothing is
+ * exchanged: the JWT itself is put on the request.
+ */
+export interface VendorCheckSigning {
+  /**
+   * The JWT's issuer, normally a vendor value such as '{vendor.app_id}'. May
+   * name vendor values as '{vendor.<key>}'.
+   */
+  iss: string;
+  /**
+   * The signing key, as one secret vendor value: '{vendor.private_key}'. A PEM
+   * private key.
+   */
+  key: string;
+  alg?: JwtAlgorithm;
+  /**
+   * How long the signed JWT lives, in seconds.
+   */
+  lifetime?: number;
+}
+
+/**
+ * One thing a vendor check's answer must show, and which vendor values are
+ * wrong when it does not.
+ */
+export interface VendorCheckRule {
+  /**
+   * The answers the row applies to. Absent: '2xx'.
+   */
+  status?: StatusMatch;
+  /**
+   * Must answer true for the answer to pass this row. Reads the answer as
+   * 'response' and the non-secret values being saved as 'vendor'. 'false'
+   * refuses every answer the row applies to.
+   */
+  holds: Expression;
+  /**
+   * The vendor fields that are wrong when the row refuses. The form marks them.
+   */
+  fields: Identifier[];
+  /**
+   * What the operator is told when the row refuses.
+   */
+  message: LocalizedText;
+  /**
+   * A short text the form shows beside the message when the row refuses, such
+   * as the value the vendor holds instead. Reads what 'holds' reads. An answer
+   * that is not a string shows nothing.
+   */
+  shows?: Expression;
 }
 
 /**
@@ -1625,10 +1744,12 @@ export interface EndpointIdentity {
  * read: {status, headers, body}, with header names in lowercase. Every
  * expression of a declarative plug-in also reads 'settings', the install's
  * settings by key, and 'aliases', each unique setting's earlier values by key,
- * as a list, except a token's 'exchange_body', which reads only its connection.
- * Each evaluation is bounded: at most 1000 milliseconds, 500 levels of nesting
- * and an answer of 1048576 bytes as JSON. An expression that fails or passes a
- * bound answers 'unavailable: mapping-failed'.
+ * as a list, except a token's 'exchange_body', which reads only its connection,
+ * and a vendor check's, which read only 'vendor', the non-secret vendor values
+ * being saved, by key, 'now' and, on the way back, 'response'. Each evaluation
+ * is bounded: at most 1000 milliseconds, 500 levels of nesting and an answer of
+ * 1048576 bytes as JSON. An expression that fails or passes a bound answers
+ * 'unavailable: mapping-failed'.
  */
 export type Expression = string;
 
