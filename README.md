@@ -307,6 +307,59 @@ vendor: {
   key must be a vendor field, each answer is written at most once, and
   `client_secret`, `pem` and `webhook_secret` go to `secret` fields.
 
+### Checking the vendor values
+
+An operator who types the values by hand can mix two clients' values, or
+mistype a name the vendor builds addresses from, and nothing says so until a
+community's connection fails. `vendor.check` is a call Initiative makes to the
+vendor when the values are saved, before they are written, and the rows that
+say what its answer must show:
+
+```ts
+check: {
+  sign: { iss: "{vendor.app_id}", key: "{vendor.private_key}" },
+  request: { method: "GET", url: "'https://api.tracker.example/app'" },
+  expect: [
+    {
+      status: "4xx",
+      holds: "false",
+      fields: ["app_id", "private_key"],
+      message: { en: "The vendor knows no client by this id and key." },
+    },
+    {
+      holds: "response.body.name = vendor.app_name",
+      fields: ["app_name"],
+      message: { en: "The id and key belong to a client with another name." },
+      shows: "response.body.name",
+    },
+  ],
+},
+```
+
+- `request` is the call, written as a declarative plug-in's requests are:
+  https, and on one of your `hosts` when you name them. Its expressions read
+  `vendor`, the non-secret values being saved, by key, and `now`; secrets are
+  never readable.
+- `sign` has Initiative sign a JWT with one secret vendor value (`key`), issued
+  by vendor values (`iss`), and put it on the request as `auth` says (default
+  `Authorization: Bearer <jwt>`). Without `sign` the request carries no
+  credential.
+- `expect` is tried in order. A row applies to the answers its `status`
+  matches (default `2xx`) and refuses one when `holds` does not answer true;
+  `holds` also reads the answer as `response`. The first row that refuses
+  keeps the values from being written, and the form marks its `fields`, shows
+  its `message`, and shows what `shows` answers beside it. An answer no row
+  refuses is accepted.
+- When the vendor cannot be reached, an expression fails, or a non-2xx answer
+  has no row, the values are written and the form says the check could not
+  run. A check never keeps an operator from saving because the vendor is down.
+
+The check runs when a save sets a vendor value it reads, typed on the form or
+written by the vendor's setup. `validateManifest` refuses rows naming fields
+the vendor block does not declare, a key that is not one secret vendor value,
+an issuer naming anything but vendor values, a header that would replace the
+signed JWT's, and expressions that do not parse.
+
 ### A token minted on demand
 
 A static connection's `token` has Initiative mint its access token rather than

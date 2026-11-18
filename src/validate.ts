@@ -6,7 +6,8 @@
  * (the endpoint a widget binds, a `requires` term's connection, an endpoint's
  * service prefix), the features/blocks cross-check in both directions, UTF-8
  * byte-size caps, the rules tying a connection's `flow` and `token` to its
- * scope and fields, what a vendor `setup` writes to, the bounds, ids and
+ * scope and fields, what a vendor `setup` writes to and a vendor `check`
+ * reads, the bounds, ids and
  * endpoints of `schedules`, which terms each kind's schedules, actions, fields
  * and webhook events take, the unique keys and ids of `fields`, `parts`,
  * `actions` and `settings`, the unique values of a field's `options`, what a
@@ -245,6 +246,7 @@ export function validateManifest(manifest: unknown, options: { publicId?: string
     ...connectionProblems(body),
     ...webhookProblems(body),
     ...setupProblems(body),
+    ...checkProblems(body),
     ...scheduleProblems(body),
     ...partProblems(body),
     ...automationProblems(body),
@@ -970,6 +972,73 @@ function setupProblems(body: Manifest): ValidationProblem[] {
     }
     written.add(value);
   }
+  return problems;
+}
+
+/**
+ * What a vendor check reads and signs with: its rows name vendor fields, its
+ * JWT is signed with one secret vendor value and issued by vendor values, its
+ * credential's header is Initiative's to set, and every expression parses.
+ */
+function checkProblems(body: Manifest): ValidationProblem[] {
+  const check = body.vendor?.check;
+  if (!check) return [];
+  const problems: ValidationProblem[] = [];
+  const push = (where: string, message: string) => problems.push({ where, message });
+  const fields = new Map(body.vendor!.fields.map((field) => [field.key, field]));
+  const expression = (text: string | undefined, where: string) => {
+    if (text === undefined) return;
+    try {
+      parseExpression(text);
+    } catch (error) {
+      const { message, position } = error as ExpressionError;
+      push(where, `does not parse: ${message}${position === undefined ? "" : ` (at character ${position})`}`);
+    }
+  };
+
+  const sign = check.sign;
+  if (sign) {
+    for (const name of templateNames(sign.iss)) {
+      if (!name.startsWith("vendor.")) {
+        push("/vendor/check/sign/iss", `'{${name}}' is not a vendor value: a check reads only the vendor block`);
+      } else if (!fields.has(name.slice("vendor.".length))) {
+        push("/vendor/check/sign/iss", `'{${name}}' is not a field of the vendor block`);
+      }
+    }
+    const key = /^\{vendor\.([^{}]+)\}$/.exec(sign.key)?.[1];
+    if (key === undefined) {
+      push("/vendor/check/sign/key", "the signing key is one vendor value, '{vendor.<key>}'");
+    } else if (!fields.has(key)) {
+      push("/vendor/check/sign/key", `'{vendor.${key}}' is not a field of the vendor block`);
+    } else if (fields.get(key)!.type !== "secret") {
+      push("/vendor/check/sign/key", `'${key}' signs, so it is a secret field`);
+    }
+  } else if (check.auth) {
+    push("/vendor/check/auth", "puts the signed JWT on the request, and there is none without 'sign'");
+  }
+
+  const request = check.request;
+  const credentialHeader = (check.auth?.header ?? "Authorization").toLowerCase();
+  expression(request.url, "/vendor/check/request/url");
+  for (const [name, text] of Object.entries(request.query ?? {})) {
+    expression(text, `/vendor/check/request/query/${name}`);
+  }
+  for (const [name, text] of Object.entries(request.headers ?? {})) {
+    expression(text, `/vendor/check/request/headers/${name}`);
+    if (sign && name.toLowerCase() === credentialHeader) {
+      push(`/vendor/check/request/headers/${name}`, "the signed JWT's header is Initiative's to set");
+    }
+  }
+  expression(request.body, "/vendor/check/request/body");
+
+  check.expect.forEach((row, index) => {
+    const where = `/vendor/check/expect/${index}`;
+    expression(row.holds, `${where}/holds`);
+    expression(row.shows, `${where}/shows`);
+    row.fields.forEach((field, at) => {
+      if (!fields.has(field)) push(`${where}/fields/${at}`, `'${field}' is not a field of the vendor block`);
+    });
+  });
   return problems;
 }
 
