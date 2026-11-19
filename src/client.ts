@@ -33,7 +33,7 @@ import {
   type PluginApiOperation,
   type PluginApiOperationId,
 } from "./plugin-api.generated.js";
-import type { ActorKind, ItemKind, PluginScope, Scope } from "./contract.js";
+import type { ActorKind, ItemKind, PluginScope, Scope, ToolScope } from "./contract.js";
 import type { Actor, ItemRef } from "./define.js";
 import { signJwt, type PluginSigningKey } from "./keys.js";
 import { SignIn } from "./sign-in.js";
@@ -101,7 +101,7 @@ export interface InitiativeOptions {
 
 /** Narrowing for a token: fewer scopes than were granted, and one initiative. */
 export interface Narrowing {
-  scopes?: ReadonlyArray<Scope | PluginScope>;
+  scopes?: ReadonlyArray<Scope | PluginScope | ToolScope>;
   initiative?: number;
 }
 
@@ -636,7 +636,7 @@ export class Client {
   async request<T = unknown>(
     method: string,
     path: string,
-    options: { scope: Scope | PluginScope; body?: unknown }
+    options: { scope: Scope | PluginScope | ToolScope; body?: unknown }
   ): Promise<T> {
     return (await this.call(method, `${COMMUNITY_PREFIX}${path.startsWith("/") ? path : `/${path}`}`, options)) as T;
   }
@@ -796,7 +796,7 @@ export class Client {
     const operation: PluginApiOperation = pluginApiOperations[id];
     const { method, path, scope } = operation;
     const values = args.path ?? {};
-    let needs: Scope;
+    let needs: Scope | ToolScope;
     if (typeof scope === "string") {
       needs = scope;
     } else if ("by" in scope) {
@@ -806,6 +806,18 @@ export class Client {
         throw new TypeError(`${id}: ${scope.by} is one of ${Object.keys(scope.scopes).join(", ")}, not ${value}`);
       }
       needs = picked;
+    } else if ("tool" in scope) {
+      // A kind is a key, '.' and its plug-in's uid, shared by the plug-in's
+      // tool and its items, and the scope is the tool's kind's. A plug-in has
+      // one tool, so the held scope naming that uid is the tool's.
+      const kind = String(values[scope.tool]);
+      const uid = kind.slice(kind.indexOf(".") + 1);
+      const held = await this.scopes();
+      const tool = held
+        .map((one) => one.slice(0, one.lastIndexOf(":")))
+        .find((resource) => resource.includes(".") && resource.slice(resource.indexOf(".") + 1) === uid);
+      if (tool === undefined) throw new MissingScopeError(`<tool key>.${uid}:${scope.access}`);
+      needs = `${tool}:${scope.access}` as ToolScope;
     } else {
       // Initiative checks each item; the token needs at least one of them.
       const held = await this.scopes();

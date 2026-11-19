@@ -31,6 +31,7 @@ import type {
   ActorKind,
   Availability,
   PluginScope,
+  ToolScope,
   BundledDashboard,
   BundledDashboardWidget,
   Connection,
@@ -475,7 +476,7 @@ export interface ListingDeclaration {
    */
   image?: string;
   /** The most the plug-in may ever be granted. Absent: its `scopes`. */
-  scopeCeiling?: Array<Scope | PluginScope>;
+  scopeCeiling?: Array<Scope | PluginScope | ToolScope>;
   /**
    * The Docker Compose service an operator copies to run the image beside
    * Initiative. `service` is the fragment, YAML text of at most 4096
@@ -577,7 +578,7 @@ export interface PluginDefinition<E, W> {
    */
   availability?: Availability;
   /** The scopes it asks a community to grant. A declarative plug-in asks only for read scopes. */
-  scopes?: Array<Scope | PluginScope>;
+  scopes?: Array<Scope | PluginScope | ToolScope>;
   /**
    * A container plug-in may act through any plug-in the community lets it use,
    * not only those its `plugins:` scopes name (the manifest's

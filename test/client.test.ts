@@ -286,6 +286,32 @@ describe("the plug-in API", () => {
     expect(error.message).toContain("one of");
     expect(routes()).toHaveLength(1);
   });
+
+  it("checks the scope of the tool a tool plug-in's kind is or sits in", async () => {
+    scope = "counter_group.tsjvtcm0s7gv2x:write";
+    answers.set("GET /api/v1/c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x/", () => json(200, { items: [] }));
+    answers.set("POST /api/v1/c/0/plugin-tools/counter.tsjvtcm0s7gv2x/", (request) => json(201, JSON.parse(request.body)));
+    const api = initiative().asInstallation("gapp_1").api;
+    await api.listPluginToolRows({ path: { kind: "counter_group.tsjvtcm0s7gv2x" }, query: { initiative_id: 4 } });
+    await api.createPluginToolRow({ path: { kind: "counter.tsjvtcm0s7gv2x" }, body: { name: "Torches", parent_id: 9 } });
+    expect(routes()).toEqual([
+      "GET /c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x/?initiative_id=4",
+      "POST /c/0/plugin-tools/counter.tsjvtcm0s7gv2x/",
+    ]);
+
+    const other = await api.readPluginToolRow({ path: { kind: "deck.a7m2qx8n4tvb9c", row_id: 1 } }).catch((caught) => caught);
+    expect(other).toBeInstanceOf(MissingScopeError);
+    expect(other.scope).toBe("<tool key>.a7m2qx8n4tvb9c:read");
+
+    scope = "counter_group.tsjvtcm0s7gv2x:read";
+    const reading = initiative().asInstallation("gapp_1").api;
+    const write = await reading
+      .updatePluginToolRow({ path: { kind: "counter.tsjvtcm0s7gv2x", row_id: 2 }, body: {} })
+      .catch((caught) => caught);
+    expect(write).toBeInstanceOf(MissingScopeError);
+    expect(write.scope).toBe("counter_group.tsjvtcm0s7gv2x:write");
+    expect(routes()).toHaveLength(2);
+  });
 });
 
 describe("the installation itself", () => {

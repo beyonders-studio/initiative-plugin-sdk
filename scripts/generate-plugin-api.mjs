@@ -162,6 +162,7 @@ const { doc, objectType, tsType } = emitter({
 function scopeProse(scope) {
   if (typeof scope === "string") return `needs \`${scope}\``;
   if ("by" in scope) return `needs the scope its \`${scope.by}\` names`;
+  if ("tool" in scope) return `needs \`<tool kind>:${scope.access}\` for the tool its \`${scope.tool}\` is or sits in`;
   return `needs one of ${scope.any_of.map((one) => `\`${one}\``).join(", ")}`;
 }
 
@@ -209,6 +210,10 @@ function emit(spec) {
       const inQuery = parameters.filter((one) => one.in === "query");
       if (typeof scope === "object" && "by" in scope && !inPath.some((one) => one.name === scope.by)) {
         fail(`${id} picks its scope by ${scope.by}, which is not a path parameter`);
+      }
+      if (typeof scope === "object" && "tool" in scope) {
+        if (!inPath.some((one) => one.name === scope.tool)) fail(`${id} picks its tool by ${scope.tool}, which is not a path parameter`);
+        if (scope.access !== "read" && scope.access !== "write") fail(`${id} needs ${scope.access} on its tool, which is neither read nor write`);
       }
 
       const shape = [`  ${id}: {`];
@@ -290,12 +295,15 @@ const PREAMBLE = `import type { Scope } from "./contract.js";
 
 /**
  * The scope an operation needs: one scope; the scope an argument picks
- * (\`by\`); or any one of several, when Initiative checks each item (\`per\`).
+ * (\`by\`); any one of several, when Initiative checks each item (\`per\`); or
+ * a tool plug-in's, \`<tool kind>:read\` or \`<tool kind>:write\`, for the tool
+ * the kind an argument names is or sits in (\`tool\`).
  */
 export type PluginApiScope =
   | Scope
   | { by: string; scopes: Readonly<Record<string, Scope>> }
-  | { per: string; any_of: readonly Scope[] };
+  | { per: string; any_of: readonly Scope[] }
+  | { tool: string; access: "read" | "write" };
 
 export interface PluginApiOperation {
   method: "GET" | "PUT" | "POST" | "DELETE" | "PATCH";

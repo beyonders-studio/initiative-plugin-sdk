@@ -887,8 +887,38 @@ listingUid: plugin.uid })`, which reads billing's key from
 
   No call is sent unless the token holds the scope it needs: the route's own,
   the one its argument picks (`archiveEntity` on a `file` needs
-  `files:write`), or, where Initiative checks each item, at least one of
-  them. `MissingScopeError` names the scope instead. Writing implies reading.
+  `files:write`), the scope of the tool a tool plug-in's kind names, or, where
+  Initiative checks each item, at least one of them. `MissingScopeError` names
+  the scope instead. Writing implies reading.
+
+  A tool plug-in's tool ([Declaring a tool](#declaring-a-tool)) is served by
+  one set of routes, `/plugin-tools/{kind}`, for every tool plug-in. A kind is
+  a table of the tool: the tool's key, `.`, and its plug-in's uid in lower
+  case, so Counters' groups are `counter_group.tsjvtcm0s7gv2x` and the counters
+  in them `counter.tsjvtcm0s7gv2x`. The tool's rows and its items' share each
+  route:
+
+  | Method | Route | Does | Needs |
+  |---|---|---|---|
+  | `listPluginToolRows` | `GET /plugin-tools/{kind}/` | A page of the tool's rows in an initiative (`initiative_id`), or of an item's under the row it sits in (`parent_id`). | `<tool kind>:read` |
+  | `createPluginToolRow` | `POST /plugin-tools/{kind}/` | A new row there, its `fields` by key and its `people` by reference. A field left out starts at its default. | `<tool kind>:write` |
+  | `readPluginToolRow` | `GET /plugin-tools/{kind}/{row_id}` | One row. | `<tool kind>:read` |
+  | `updatePluginToolRow` | `PATCH /plugin-tools/{kind}/{row_id}` | Changes what is sent. | `<tool kind>:write` |
+  | `duplicatePluginToolRow` | `POST /plugin-tools/{kind}/{row_id}/duplicate` | A copy of a row with the items under it. | `<tool kind>:write` |
+  | `runPluginToolAction` | `POST /plugin-tools/{kind}/{row_id}/actions/{action_id}` | Runs one of the tool's actions, with its `params` as `fields` and `people`. | `<tool kind>:write` |
+
+  The scope is the tool's, for its items too: `counter_group.tsjvtcm0s7gv2x:read`
+  lists counters. Each value is held to its field's declaration, as a
+  person's edit is. Trash, archive, comments, tags, links and sharing are the
+  routes every tool shares. A change signal on `/plugin-tools/{kind}/{row_id}/ws`
+  is a person's, for Initiative's own pages: it takes a person's session, not
+  a plug-in's token, and is not part of the plug-in API.
+
+  ```ts
+  const kind = "counter.tsjvtcm0s7gv2x";
+  const { items } = await client.api.listPluginToolRows({ path: { kind }, query: { parent_id: 9 } });
+  await client.api.updatePluginToolRow({ path: { kind, row_id: items[0].id }, body: { fields: { count: 3 } } });
+  ```
 
   `client.api` is generated from the plug-in API contract this SDK publishes
   ([The plug-in API contract](#the-plug-in-api-contract)), so it changes as
@@ -1703,6 +1733,7 @@ either the file's version or the client is stale.
 | `initiatives:moderate` | Acting as a moderator in an initiative it is placed in: everything there, within the plug-in's other scopes. Only on a token that asks for it (`level=moderator`) and is narrowed to that initiative. |
 | `community:admin` | Acting with a community admin's standing across the community, within the plug-in's other scopes. Only on a token that asks for it (`level=community_admin`) and is not narrowed to an initiative. |
 | `plugins:<public id>` | Calling that plug-in's public endpoints through Initiative, and reading the values it shows on items the plug-in can read. One per plug-in. |
+| `<kind>:read`, `<kind>:write` | A tool plug-in's tool, by its tool's kind (`counter_group.tsjvtcm0s7gv2x:read`): its rows and its items, as a built-in tool's scopes reach its own. One pair per tool plug-in, reaching a tool only in a community that installed it. |
 
 A container plug-in's `scopes` go in its manifest's `service` block. A
 declarative plug-in asks for read scopes alone, at the manifest's top level: it
@@ -1710,6 +1741,13 @@ keeps its own values on items those scopes read, and does not call Initiative.
 A container plug-in with `callsPlugins: true` needs no `plugins:` scope in its
 manifest: a community that installs another plug-in is asked there whether
 this one may use it, and that grants `plugins:<public id>` for it.
+
+A plug-in that reaches a tool plug-in's tool names its scope like any other:
+the tool's key and its plug-in's uid, both fixed by that plug-in's manifest, so
+the kind is the same in every deployment. The community grants it on install
+with the rest, and it reaches nothing in a community without the tool. A
+manifest names at most 24 `plugins:` and tool scopes together. A tool plug-in
+itself is granted no scopes: it runs no code.
 
 Writing implies reading. Within its scopes a plug-in still sees only what is open
 to the initiative, shared with the plug-in, or created by it — unless a token asks

@@ -1020,6 +1020,16 @@ export type NamespacedId = string;
  */
 export type PluginScope = `plugins:${string}`;
 
+/**
+ * '<kind>:read' or '<kind>:write': a tool plug-in's tool, reached as a built-in
+ * tool's scopes reach its own: its rows and its items. The kind is the tool's
+ * key, '.', and its plug-in's uid in lower case
+ * ('counter_group.tsjvtcm0s7gv2x'). Not one of the fixed scopes: the family is
+ * open, one per tool plug-in, and names a tool only a community that installed
+ * it has; elsewhere it reaches nothing.
+ */
+export type ToolScope = `${string}.${string}:read` | `${string}.${string}:write`;
+
 export interface Endpoint {
   id: NamespacedId;
   /**
@@ -2804,13 +2814,15 @@ export interface Manifest {
     protocol?: Protocol;
     /**
      * The scopes this plug-in asks a community to grant: what its installation
-     * and member tokens act with. The fixed scopes, and 'plugins:<public_id>'
-     * for each plug-in this one uses, to call its public endpoints and read the
-     * values it shows on items (at most 24 of those). The community grants some
-     * or all of them when it installs the plug-in, and a token never carries
-     * more than was granted. Writing implies reading. Absent means none.
+     * and member tokens act with. The fixed scopes; 'plugins:<public_id>' for
+     * each plug-in this one uses, to call its public endpoints and read the
+     * values it shows on items; and '<kind>:read' or '<kind>:write' for each
+     * tool plug-in's tool it reaches (at most 24 of those two together). The
+     * community grants some or all of them when it installs the plug-in, and a
+     * token never carries more than was granted. Writing implies reading.
+     * Absent means none.
      */
-    scopes?: Array<Scope | PluginScope>;
+    scopes?: Array<Scope | PluginScope | ToolScope>;
     /**
      * This plug-in may act through any plug-in the community lets it use, not
      * only those its scopes name as 'plugins:<public_id>'. When a community
@@ -2877,7 +2889,7 @@ export interface Manifest {
    * Initiative keeps them only on items these scopes read. A container plug-in
    * declares its scopes in its service block.
    */
-  scopes?: Array<Scope | PluginScope>;
+  scopes?: Array<Scope | PluginScope | ToolScope>;
   vendor?: Vendor;
   connections?: Connection[];
   webhooks?: Webhooks;
