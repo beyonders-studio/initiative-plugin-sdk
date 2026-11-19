@@ -103,6 +103,38 @@ describe("taking the document from Initiative", () => {
   });
 });
 
+describe("a tool plug-in's scope", () => {
+  const toolRoute = (parameter: string) => ({
+    ...document(),
+    paths: {
+      "/plugin-tools/{kind}/": {
+        get: {
+          operationId: "list_plugin_tool_rows",
+          "x-plugin-scope": { tool: "kind", access: "read" },
+          parameters: [{ name: parameter, in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "OK" } },
+        },
+      },
+    },
+  });
+
+  it("is the tool's scope for the kind its path names, in the table and the method's words", async () => {
+    served = toolRoute("kind");
+    await generate("--url", base);
+    expect(client()).toContain('list_plugin_tool_rows: { method: "GET", path: "/plugin-tools/{kind}/", scope: { tool: "kind", access: "read" } },');
+    expect(client()).toContain("needs `<tool kind>:read` for the tool its `kind` is or sits in.");
+  });
+
+  it("fails when no path parameter names the kind, and publishes nothing", async () => {
+    served = toolRoute("type");
+    await expect(generate("--url", base)).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("list_plugin_tool_rows picks its tool by kind, which is not a path parameter"),
+    });
+    expect(() => published()).toThrow();
+  });
+});
+
 describe("the client from the published document", () => {
   beforeEach(async () => {
     await generate("--url", base);

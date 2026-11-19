@@ -85,6 +85,12 @@ function pattern(name, form, prefix = "") {
   if (form === "letterFirst") return `${lead}[a-z]${cls}*$`;
   // Words of the set joined by single '-': no '-' first, last or twice.
   if (form === "hyphenated") return `${lead}${cls}+(?:-${cls}+)*$`;
+  // A tool plug-in's scope: a tool key of the set, '.', a uid in lower case,
+  // and ':read' or ':write'.
+  if (form === "toolScope") {
+    const uid = `[${[...new Set(charsets.uid.toLowerCase())].sort().map(escape).join("")}]`;
+    return `${lead}[a-z]${cls}{0,${caps.toolKeyLength - 1}}\\.${uid}{${caps.uidLength}}:(?:read|write)$`;
+  }
   throw new Error(`unknown pattern form '${form}'`);
 }
 
@@ -140,6 +146,7 @@ const { doc, objectType, tsType } = emitter({
     if (node.ref) return pascal(node.ref);
     if (typeof node.enum === "string") return pascal(node.enum);
     if (node.type === "string" && node.patternPrefix) return `\`${node.patternPrefix}\${string}\``;
+    if (node.patternForm === "toolScope") return "`${string}.${string}:read` | `${string}.${string}:write`";
     return undefined;
   },
   prose,
