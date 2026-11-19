@@ -87,6 +87,18 @@ export const TOOL_ICONS: readonly ToolIcon[] = ["beaker", "book", "bookmark", "b
 export type ToolColumn = "id" | "initiative_id" | "name" | "position" | "created_at" | "updated_at" | "created_by" | "created_by_kind" | "deleted_at" | "deleted_by" | "deleted_by_kind" | "purge_at" | "archived_at" | "held_at" | "hold_id" | "listing_uid" | "listing_version" | "comments_enabled" | "comments_locked_at" | "actions";
 export const TOOL_COLUMNS: readonly ToolColumn[] = ["id", "initiative_id", "name", "position", "created_at", "updated_at", "created_by", "created_by_kind", "deleted_at", "deleted_by", "deleted_by_kind", "purge_at", "archived_at", "held_at", "hold_id", "listing_uid", "listing_version", "comments_enabled", "comments_locked_at", "actions"];
 
+export type ToolLayoutField = "name" | "created_by" | "created_at" | "updated_at" | "tags";
+export const TOOL_LAYOUT_FIELDS: readonly ToolLayoutField[] = ["name", "created_by", "created_at", "updated_at", "tags"];
+
+export type ToolListKind = "grid" | "table";
+export const TOOL_LIST_KINDS: readonly ToolListKind[] = ["grid", "table"];
+
+export type ToolDetailPart = "byline" | "notice" | "actions" | "relations" | "comments";
+export const TOOL_DETAIL_PARTS: readonly ToolDetailPart[] = ["byline", "notice", "actions", "relations", "comments"];
+
+export type FieldDisplay = "number" | "stars" | "bar" | "clock";
+export const FIELD_DISPLAYS: readonly FieldDisplay[] = ["number", "stars", "bar", "clock"];
+
 export type Tone = "accent" | "positive" | "negative" | "warning" | "neutral" | "muted";
 export const TONES: readonly Tone[] = ["accent", "positive", "negative", "warning", "neutral", "muted"];
 
@@ -165,6 +177,10 @@ export const CAPS = {
   dashboardBindingParams: 12,
   identifierLength: 64,
   toolKeyLength: 40,
+  layoutNodes: 300,
+  layoutDepth: 6,
+  layoutBytes: 65536,
+  layoutTitleLength: 100,
   publicIdLength: 120,
   pathLength: 200,
   endpointIdLength: 200,
@@ -275,14 +291,29 @@ export const FIELDS = {
   buttonNode: ["type", "props"],
   part: ["id", "name", "on", "tree", "description", "permission", "requires"],
   action: ["id", "name", "endpoint", "params", "write", "on", "confirm", "menu", "permission", "requires"],
-  tool: ["key", "name", "instance_name", "icon", "fields", "items", "actions"],
+  tool: ["key", "name", "instance_name", "icon", "fields", "layouts", "items", "actions"],
   toolField: ["key", "name", "kind", "currency", "options", "default", "counter"],
   toolCounter: ["min", "max", "step", "initial"],
-  toolItem: ["key", "name", "parent", "fields", "open_while"],
+  toolItem: ["key", "name", "parent", "fields", "layouts", "open_while"],
   toolOpenWhile: ["field", "below", "at_most", "above", "at_least", "equals", "not_equals", "is", "in", "not_passed"],
   toolAction: ["id", "name", "on", "params", "write", "confirm"],
   toolChange: ["set", "items"],
   toolItemChange: ["id", "set"],
+  toolLayouts: ["list", "detail"],
+  toolListLayout: ["kind", "card", "columns", "displays"],
+  toolDetailLayout: ["header", "main", "side"],
+  layoutCard: ["type", "children"],
+  layoutCardStack: ["type", "props", "children"],
+  layoutStackProps: ["direction", "gap", "wrap", "align", "tone"],
+  layoutCardField: ["type", "props"],
+  layoutFieldProps: ["field"],
+  layoutProperties: ["type"],
+  layoutDetailStack: ["type", "props", "children"],
+  layoutSection: ["type", "props", "children"],
+  layoutSectionProps: ["title", "collapsed"],
+  layoutDetailField: ["type", "props"],
+  layoutDetailFieldProps: ["field", "required"],
+  layoutOwnPart: ["type"],
   permission: ["id", "name", "level", "members"],
   change: ["set", "upsert", "remove"],
   targetedChange: ["target", "set", "upsert", "remove"],
@@ -1492,9 +1523,10 @@ export interface Action {
  * switch and its create permission) hold for it without being declared. So a
  * tool declares only what is its own: its key, names and icon, the fields of
  * its own rows and of each item table, which item tables sit under which, which
- * items stay open, and its actions. Initiative builds a default list and item
- * layout from the fields, which the community changes in its layout editor; the
- * tool carries no layout. Every row holds the universal columns ('toolColumn')
+ * items stay open, what each table draws, and its actions. What a table draws
+ * is its 'layouts', in the layout format Initiative's own tools are drawn in:
+ * they are the tool's starting layouts, which each community then changes in
+ * its layout editor. Every row holds the universal columns ('toolColumn')
  * beside the fields it declares.
  */
 export interface Tool {
@@ -1523,6 +1555,10 @@ export interface Tool {
    */
   fields?: ToolField[];
   /**
+   * How the tool's own rows are listed, and how one of them is shown.
+   */
+  layouts: ToolLayouts;
+  /**
    * The item tables under the tool's rows, at most 4, two levels deep at most:
    * an item sits under the tool or under an item that sits under the tool. Each
    * key at most once, and never the tool's.
@@ -1538,8 +1574,9 @@ export interface Tool {
 /**
  * A key a tool declares: a lower-case letter, then lower-case letters, digits
  * and '_', at most 40 characters. Initiative builds table and column names from
- * it, so a field's key is never a universal column's name ('toolColumn') and
- * never ends in '_id', which Initiative's own keys to a parent end in.
+ * it, so a field's key is never a universal column's name ('toolColumn') nor a
+ * field every row has ('toolLayoutField'), and never ends in '_id', which
+ * Initiative's own keys to a parent end in.
  */
 export type ToolKey = string;
 
@@ -1642,6 +1679,10 @@ export interface ToolItem {
    * Its fields, at most 32, each key at most once.
    */
   fields: ToolField[];
+  /**
+   * How the item is listed under the row it sits under, and how one is shown.
+   */
+  layouts: ToolLayouts;
   open_while?: ToolOpenWhile;
 }
 
@@ -1750,6 +1791,191 @@ export interface ToolChange {
 export interface ToolItemChange {
   id: number;
   set: Record<string, unknown>;
+}
+
+/**
+ * What one of a tool's tables draws: how its rows are listed, and how one of
+ * them is shown on its own page. Both are written in the layout format
+ * Initiative stores and draws for its own tools, naming the table's fields. On
+ * install they become the community's layouts for the table, which its people
+ * change in the layout editor as they change any tool's.
+ */
+export interface ToolLayouts {
+  list: ToolListLayout;
+  detail: ToolDetailLayout;
+}
+
+/**
+ * How a table's rows are listed: as a 'grid' of cards, each drawn as its 'card'
+ * says, or as a 'table', a column per field in 'columns'. At most 300 parts and
+ * columns together, nested at most 6 deep.
+ */
+export interface ToolListLayout {
+  kind: ToolListKind;
+  /**
+   * What a grid's card shows of a row. A grid's only, and required on one.
+   */
+  card?: LayoutCard;
+  /**
+   * A table's columns, in order. A table's only, and required on one.
+   */
+  columns?: ToolKey[];
+  /**
+   * How a scale or counter field the list shows is drawn, by its key: a scale
+   * as a 'number', 'stars' or a 'bar'; a counter as a 'number', a 'bar' or a
+   * 'clock'. A bar and a clock need the counter's 'min' and 'max', and a row
+   * missing one draws a number. Absent: a number.
+   */
+  displays?: Record<string, FieldDisplay>;
+}
+
+/**
+ * How one row is shown on its own page, in three regions, each its parts in
+ * order: 'header' across the top, 'main' and 'side' beside it. A region left
+ * out holds nothing, and what is placed nowhere is not shown. At most 300 parts
+ * across the three, nested at most 6 deep.
+ */
+export interface ToolDetailLayout {
+  header?: LayoutDetailPart[];
+  main?: LayoutDetailPart[];
+  side?: LayoutDetailPart[];
+}
+
+/**
+ * A card: what a list shows of one row, its parts in order.
+ */
+export interface LayoutCard {
+  type: "card";
+  children?: LayoutCardPart[];
+}
+
+/**
+ * One part of a card, told apart by 'type'.
+ */
+export type LayoutCardPart = LayoutCard | LayoutCardStack | LayoutCardField | LayoutProperties;
+
+/**
+ * A card's parts side by side or one above another.
+ */
+export interface LayoutCardStack {
+  type: "stack";
+  props?: LayoutStackProps;
+  children?: LayoutCardPart[];
+}
+
+/**
+ * How a stack lays its parts out. Each absent: Initiative's own.
+ */
+export interface LayoutStackProps {
+  direction?: "column" | "row";
+  /**
+   * The space between its parts.
+   */
+  gap?: "xs" | "sm";
+  /**
+   * A row runs onto a second line rather than past its edge.
+   */
+  wrap?: boolean;
+  /**
+   * Its parts keep their own width rather than filling the column.
+   */
+  align?: "start";
+  /**
+   * Drawn in a quieter colour.
+   */
+  tone?: "muted";
+}
+
+/**
+ * One field of the row, drawn in its kind's look.
+ */
+export interface LayoutCardField {
+  type: "field";
+  props: LayoutFieldProps;
+}
+
+export interface LayoutFieldProps {
+  /**
+   * A field of the table the layout is for: one it declares, by its key, or one
+   * every row has ('toolLayoutField'): 'name', 'created_by' (who made it),
+   * 'created_at', 'updated_at' or 'tags'.
+   */
+  field: ToolKey;
+}
+
+/**
+ * Every property the community's initiative gives the row, in its own order.
+ */
+export interface LayoutProperties {
+  type: "properties";
+}
+
+/**
+ * One part of a page, told apart by 'type'.
+ */
+export type LayoutDetailPart = LayoutDetailStack | LayoutSection | LayoutDetailField | LayoutProperties | LayoutOwnPart;
+
+/**
+ * A page's parts side by side or one above another.
+ */
+export interface LayoutDetailStack {
+  type: "stack";
+  props?: LayoutStackProps;
+  children?: LayoutDetailPart[];
+}
+
+/**
+ * A bordered group of a page's parts.
+ */
+export interface LayoutSection {
+  type: "section";
+  props?: LayoutSectionProps;
+  children?: LayoutDetailPart[];
+}
+
+export interface LayoutSectionProps {
+  /**
+   * Drawn as written, in every language, as the community's own section titles
+   * are.
+   */
+  title?: string;
+  /**
+   * Drawn folded until the reader opens it.
+   */
+  collapsed?: boolean;
+}
+
+/**
+ * One field of the row, which a reader edits there.
+ */
+export interface LayoutDetailField {
+  type: "field";
+  props: LayoutDetailFieldProps;
+}
+
+export interface LayoutDetailFieldProps {
+  /**
+   * A field of the table the layout is for: one it declares, by its key, or one
+   * every row has ('toolLayoutField'): 'name', 'created_by' (who made it),
+   * 'created_at', 'updated_at' or 'tags'.
+   */
+  field: ToolKey;
+  /**
+   * A person fills it in to add a row, and cannot empty it once it is filled.
+   * Only a field the table declares, and never a counter or a checkbox, which
+   * are never empty.
+   */
+  required?: boolean;
+}
+
+/**
+ * One of the parts every tool's page has ('toolDetailPart'): 'byline', who made
+ * it and when; 'notice', why the reader cannot change it; 'actions', the menu
+ * of what else can be done with it; 'relations', what it is linked to;
+ * 'comments'.
+ */
+export interface LayoutOwnPart {
+  type: ToolDetailPart;
 }
 
 /**
@@ -2391,9 +2617,10 @@ export interface WebhookStatus {
  * each kind's schedules, actions, fields and webhook events take, the unique
  * keys and ids of fields, parts, actions and settings, the unique values of a
  * field's options, what a part's nodes, a field's element actions and an
- * action's endpoint and params name, the placeholders in a part's text, and a
- * part's size and depth are enforced by the platform on publish and are not
- * expressible here.
+ * action's endpoint and params name, the placeholders in a part's text, a
+ * part's size and depth, and the fields a tool's layouts name, the looks they
+ * draw them in and their size and depth are enforced by the platform on publish
+ * and are not expressible here.
  */
 export interface Manifest {
   /**
