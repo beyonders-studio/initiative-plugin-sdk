@@ -16,7 +16,8 @@
  * part, action and endpoint names, the placeholders in a part's text, and a
  * part's size and depth, and a tool plug-in's terms: the blocks it may carry,
  * its keys, what its items sit under, the kinds its fields' terms and
- * defaults fit, what its open conditions and actions name.
+ * defaults fit, what its open conditions and actions name, and what its
+ * layouts name, the looks they draw fields in and their size and depth.
  *
  * {@link validateManifest} runs the schema and then every one of those except
  * the byte caps. It also reports every term the contract does not declare: a
@@ -44,14 +45,19 @@ import {
   FIELDS,
   PLATFORM_CODES,
   TOOL_COLUMNS,
+  TOOL_LAYOUT_FIELDS,
   type Endpoint,
+  type FieldDisplay,
   type Feature,
   type ItemKind,
+  type LayoutCardPart,
+  type LayoutDetailPart,
   type Manifest,
   type PartNode,
   type Requires,
   type ToolField,
   type ToolFieldKind,
+  type ToolLayouts,
   type ToolOperand,
   type VendorRequest,
 } from "./contract.js";
@@ -1345,15 +1351,15 @@ function toolProblems(body: Manifest): ValidationProblem[] {
 
   // The tool's own rows, then each item table, with where each sits.
   const items = tool.items ?? [];
-  const tables = new Map<string, { where: string; fields: ToolField[] }>([
-    [tool.key, { where: "/tool", fields: tool.fields ?? [] }],
+  const tables = new Map<string, { where: string; fields: ToolField[]; layouts: ToolLayouts }>([
+    [tool.key, { where: "/tool", fields: tool.fields ?? [], layouts: tool.layouts }],
   ]);
   items.forEach((item, index) => {
     const where = `/tool/items/${index}`;
     key(item.key, `${where}/key`);
     if (item.key === tool.key) push(`${where}/key`, `'${item.key}' is the tool's key`);
     else if (tables.has(item.key)) push(`${where}/key`, `'${item.key}' is declared twice`);
-    else tables.set(item.key, { where, fields: item.fields });
+    else tables.set(item.key, { where, fields: item.fields, layouts: item.layouts });
   });
   const parents = new Map(items.map((item) => [item.key, item.parent]));
   items.forEach((item, index) => {
@@ -1374,6 +1380,8 @@ function toolProblems(body: Manifest): ValidationProblem[] {
       key(field.key, `${at}/key`);
       if ((TOOL_COLUMNS as readonly string[]).includes(field.key)) {
         push(`${at}/key`, `'${field.key}' is a column every tool's rows have`);
+      } else if ((TOOL_LAYOUT_FIELDS as readonly string[]).includes(field.key)) {
+        push(`${at}/key`, `'${field.key}' is a field every tool's rows have`);
       } else if (field.key.endsWith("_id")) {
         push(`${at}/key`, `'${field.key}' ends in '_id', as Initiative's keys to a parent do`);
       }
@@ -1411,6 +1419,10 @@ function toolProblems(body: Manifest): ValidationProblem[] {
         if (problem) push(`${at}/default`, problem);
       }
     });
+  }
+
+  for (const [table, { where, fields, layouts }] of tables) {
+    problems.push(...layoutProblems(table, fields, layouts, `${where}/layouts`));
   }
 
   items.forEach((item, index) => {
@@ -1469,6 +1481,84 @@ function toolProblems(body: Manifest): ValidationProblem[] {
       push(`${where}/write`, `does not parse: ${message}${position === undefined ? "" : ` (at character ${position})`}`);
     }
   });
+  return problems;
+}
+
+/** The looks a scale and a counter field are drawn in on a list. */
+const TOOL_LOOKS: Partial<Record<ToolFieldKind, readonly FieldDisplay[]>> = {
+  scale: ["number", "stars", "bar"],
+  counter: ["number", "bar", "clock"],
+};
+
+/** The kinds of field that are never empty, so a layout never requires one. */
+const NEVER_EMPTY: ReadonlySet<ToolFieldKind> = new Set(["counter", "checkbox"]);
+
+/**
+ * What is wrong with one table's layouts: every field they name is one the
+ * table declares or one every row has; a field drawn in a look is a scale or
+ * counter field the look fits; a required field is one the table declares and
+ * a person can leave empty; and each layout holds at most `layoutNodes` parts
+ * (a table's columns count as parts), at most `layoutDepth` deep. Which parts
+ * and props it may hold, and which list holds a card or columns, the schema
+ * says.
+ */
+function layoutProblems(table: string, fields: ToolField[], layouts: ToolLayouts, at: string): ValidationProblem[] {
+  const problems: ValidationProblem[] = [];
+  const push = (where: string, message: string) => problems.push({ where, message });
+  const declared = new Map(fields.map((field) => [field.key, field]));
+  const names = (field: string, where: string) => {
+    if (!declared.has(field) && !(TOOL_LAYOUT_FIELDS as readonly string[]).includes(field)) {
+      push(where, `'${field}' is not a field of '${table}'`);
+    }
+  };
+  // Every part of a tree, counted, with how deep it sits.
+  const measure = (where: string) => {
+    let count = 0;
+    let deepest = 0;
+    const visit = (part: LayoutCardPart | LayoutDetailPart, depth: number, path: string): void => {
+      count += 1;
+      deepest = Math.max(deepest, depth);
+      if (part.type === "field") {
+        names(part.props.field, `${path}/props/field`);
+        if ("required" in part.props && part.props.required) {
+          const field = declared.get(part.props.field);
+          if (!field) {
+            push(`${path}/props/required`, `only a field '${table}' declares can be required, and '${part.props.field}' is every row's`);
+          } else if (NEVER_EMPTY.has(field.kind)) {
+            push(`${path}/props/required`, `'${field.key}' is a ${field.kind} field, which is never empty`);
+          }
+        }
+      }
+      if ("children" in part) {
+        (part.children ?? []).forEach((child, index) => visit(child, depth + 1, `${path}/children/${index}`));
+      }
+    };
+    const done = (loose: number) => {
+      if (count + loose > CAPS.layoutNodes) push(where, `holds ${count + loose} parts, more than ${CAPS.layoutNodes}`);
+      if (deepest > CAPS.layoutDepth) push(where, `nests parts ${deepest} deep, deeper than ${CAPS.layoutDepth}`);
+    };
+    return { visit, done };
+  };
+
+  const list = layouts.list;
+  const listed = measure(`${at}/list`);
+  if (list.card) listed.visit(list.card, 1, `${at}/list/card`);
+  (list.columns ?? []).forEach((field, index) => names(field, `${at}/list/columns/${index}`));
+  listed.done(list.columns?.length ?? 0);
+  for (const [key, look] of Object.entries(list.displays ?? {})) {
+    const where = `${at}/list/displays/${key}`;
+    const field = declared.get(key);
+    const looks = field && TOOL_LOOKS[field.kind];
+    if (!field) push(where, `'${key}' is not a field '${table}' declares`);
+    else if (!looks) push(where, `'${key}' is a ${field.kind} field, and only a scale or counter field has a look`);
+    else if (!looks.includes(look)) push(where, `a ${field.kind} field is drawn as ${looks.map((each) => `'${each}'`).join(", ")}, not '${look}'`);
+  }
+
+  const shown = measure(`${at}/detail`);
+  for (const region of ["header", "main", "side"] as const) {
+    (layouts.detail[region] ?? []).forEach((part, index) => shown.visit(part, 1, `${at}/detail/${region}/${index}`));
+  }
+  shown.done(0);
   return problems;
 }
 

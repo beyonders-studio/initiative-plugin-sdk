@@ -1322,14 +1322,17 @@ Initiative creates the tables in each community that installs it. From then on
 the tool works as a built-in tool does and is offered in every initiative. It
 is shared, trashed, archived, commented on, tagged, linked, searched and
 exported like every other tool, and has a switch and a create permission in
-each initiative, none of which it declares. Initiative builds a list and an
-item layout from the fields, and the community changes them in the layout
-editor, so a tool carries no layout either.
+each initiative, none of which it declares. What it does declare is what each
+of its tables draws: a list and an item page for each, in the layout format
+Initiative draws its own tools in. They are the tool's starting layouts, which
+each community then changes in the layout editor.
 
 This is Counters, declared as a tool:
 
 ```ts
-import { definePlugin } from "initiative-plugin-sdk/manifest";
+import { definePlugin, type LayoutCardField } from "initiative-plugin-sdk/manifest";
+
+const field = (key: string): LayoutCardField => ({ type: "field", props: { field: key } });
 
 export default definePlugin({
   publicId: "beyonders.counters",
@@ -1341,6 +1344,20 @@ export default definePlugin({
     instance_name: { en: "Counter group" },
     icon: "gauge",
     fields: [{ key: "description", name: { en: "Description" }, kind: "text" }],
+    layouts: {
+      list: {
+        kind: "grid",
+        card: {
+          type: "card",
+          children: [field("name"), { type: "stack", props: { tone: "muted" }, children: [field("description")] }],
+        },
+      },
+      detail: {
+        header: [{ type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] }],
+        main: [field("description"), { type: "relations" }],
+        side: [{ type: "section", children: [{ type: "properties" }] }, { type: "byline" }],
+      },
+    },
     items: [
       {
         key: "counter",
@@ -1369,6 +1386,26 @@ export default definePlugin({
             ],
           },
         ],
+        layouts: {
+          list: {
+            kind: "grid",
+            card: { type: "card", children: [field("name"), field("count")] },
+            displays: { count: "bar" },
+          },
+          detail: {
+            header: [
+              { type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] },
+            ],
+            main: [field("count"), { type: "relations" }],
+            side: [
+              {
+                type: "section",
+                children: ["color", "min", "max", "step", "initial_count", "view_mode"].map(field),
+              },
+              { type: "section", children: [{ type: "properties" }] },
+            ],
+          },
+        },
         open_while: { field: "count", below: { field: "max" } },
       },
     ],
@@ -1400,8 +1437,8 @@ permissions. Only a tool plug-in carries a `tool`.
   `deleted_by`, `deleted_by_kind`, `purge_at`, `archived_at`, `held_at`,
   `hold_id`, `listing_uid`, `listing_version`, `comments_enabled`,
   `comments_locked_at` and `actions` (`TOOL_COLUMNS`). A field never takes one
-  of those names, nor one ending in `_id`, which is how Initiative names an
-  item's key to the row it sits under.
+  of those names, nor `tags`, nor one ending in `_id`, which is how Initiative
+  names an item's key to the row it sits under.
 - **The icon** is one name from `TOOL_ICONS`.
 - **Fields.** At most 32 on the tool's rows and on each item table. A kind is
   one of `text`, `number`, `date`, `datetime`, `checkbox`, `url`, `currency`,
@@ -1417,6 +1454,35 @@ permissions. Only a tool plug-in carries a `tool`.
 - **Items.** At most 4 item tables. An item sits under the tool's rows, or,
   with `parent`, under another item that sits under them: two levels at most.
   An item is deleted with the row it sits under.
+- **Layouts.** The tool and each item declare `layouts`: a `list`, how a group
+  of their rows is listed, and a `detail`, how one is shown on its own page.
+  Counters lists its counter groups as cards, each its name over its
+  description; it lists a group's counters as cards too, each its name and its
+  count drawn as a bar; and a counter's page puts its name and its menu across
+  the top, its count and what it links to in the middle, and how it counts
+  beside them. Each is a tree of parts naming the table's fields:
+  - A field is one the table declares, by its key, or one every row has
+    (`TOOL_LAYOUT_FIELDS`): `name`, `created_by`, `created_at`, `updated_at` and
+    `tags`. A layout never names another table's field.
+  - A list's `kind` is `grid`, a card per row drawn as its `card` says, or
+    `table`, a column per field in `columns`. A card holds `field`, `stack` (with
+    `direction`, `gap`, `wrap`, `align` and `tone`), `properties` (the
+    initiative's own properties for the row) and further `card` parts.
+  - `displays` draws a scale or counter field in a look, by its key: a scale as
+    a `number`, `stars` or a `bar`, a counter as a `number`, a `bar` or a `clock`.
+    A bar and a clock need the counter's bounds, so a row missing one draws a
+    number.
+  - A detail has three regions, `header`, `main` and `side`, each a list of
+    parts: `field`, `stack`, `section` (with a `title` drawn as written, and
+    `collapsed`), `properties`, and the parts every tool's page has
+    (`TOOL_DETAIL_PARTS`): `byline`, `notice`, `actions`, `relations` and
+    `comments`. A field there can be `required`, a person filling it in to add a
+    row, unless it is every row's, a counter or a checkbox.
+  - A layout holds at most 300 parts, a table's columns counting as parts,
+    nested at most 6 deep.
+
+  On install they become the community's layouts for each table, and from then
+  on they are the community's to change.
 - **`open_while`** says when an item is still open. An open item blocks what it
   is linked to until it finishes, as a task does. It names one field of the item
   and one condition on it:

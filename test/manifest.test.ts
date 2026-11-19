@@ -15,6 +15,7 @@ import {
   validateManifest,
   type Endpoint,
   type EndpointParam,
+  type LayoutDetailPart,
   type Manifest,
   type PartNode,
 } from "../src/manifest.js";
@@ -2078,6 +2079,7 @@ describe("a tool plug-in", () => {
       name: { en: key },
       ...(parent ? { parent } : {}),
       fields: [{ key: "note", name: { en: "Note" }, kind: "text" as const }],
+      layouts: { list: { kind: "table" as const, columns: ["note"] }, detail: { main: [{ type: "field" as const, props: { field: "note" } }] } },
     });
     tool(manifest).items!.push(item("tally", "counter"), item("mark", "tally"), item("counter_group"));
     const text = messages(validateManifest(manifest));
@@ -2142,7 +2144,7 @@ describe("a tool plug-in", () => {
     const withDefault = (kind: string, value: unknown) => {
       const manifest = countersManifest();
       tool(manifest).fields = [
-        { key: "value", name: { en: "Value" }, kind, default: value, ...(kind === "currency" ? { currency: "EUR" } : {}) } as never,
+        { key: "description", name: { en: "Value" }, kind, default: value, ...(kind === "currency" ? { currency: "EUR" } : {}) } as never,
       ];
       return messages(validateManifest(manifest));
     };
@@ -2215,6 +2217,85 @@ describe("a tool plug-in", () => {
     expect(text).toContain("/tool/actions/4/write: does not parse");
   });
 
+  it("names in its layouts only the table's fields and the fields every row has", () => {
+    const manifest = countersManifest();
+    tool(manifest).fields!.push({ key: "tags", name: { en: "Tags" }, kind: "text" });
+    const layouts = counter(manifest).layouts;
+    layouts.list.card!.children!.push(
+      { type: "field", props: { field: "description" } },
+      { type: "stack", children: [{ type: "field", props: { field: "created_by" } }] }
+    );
+    layouts.detail.side!.push({ type: "field", props: { field: "updated_at" } }, { type: "field", props: { field: "total" } });
+    tool(manifest).layouts.list = { kind: "table", columns: ["name", "count", "updated_at"] };
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/fields/1/key: 'tags' is a field every tool's rows have");
+    expect(text).toContain("/tool/items/0/layouts/list/card/children/2/props/field: 'description' is not a field of 'counter'");
+    expect(text).toContain("/tool/items/0/layouts/detail/side/3/props/field: 'total' is not a field of 'counter'");
+    expect(text).toContain("/tool/layouts/list/columns/1: 'count' is not a field of 'counter_group'");
+    expect(text).not.toContain("children/3");
+    expect(text).not.toContain("side/2");
+    expect(text).not.toContain("columns/0");
+    expect(text).not.toContain("columns/2");
+  });
+
+  it("draws a scale or counter field in a look its kind has", () => {
+    const looks = (displays: Record<string, string>) => {
+      const manifest = countersManifest();
+      counter(manifest).fields.push({ key: "rating", name: { en: "Rating" }, kind: "scale" });
+      counter(manifest).layouts.list.displays = displays as never;
+      return messages(validateManifest(manifest));
+    };
+    const at = "/tool/items/0/layouts/list/displays";
+    expect(looks({ count: "clock", rating: "stars" })).toBe("");
+    expect(looks({ count: "stars" })).toContain(`${at}/count: a counter field is drawn as 'number', 'bar', 'clock', not 'stars'`);
+    expect(looks({ rating: "clock" })).toContain(`${at}/rating: a scale field is drawn as 'number', 'stars', 'bar', not 'clock'`);
+    expect(looks({ min: "bar" })).toContain(`${at}/min: 'min' is a number field, and only a scale or counter field has a look`);
+    expect(looks({ name: "number" })).toContain(`${at}/name: 'name' is not a field 'counter' declares`);
+    expect(looks({ count: "dial" })).not.toBe("");
+  });
+
+  it("requires only a declared field a person can leave empty", () => {
+    const manifest = countersManifest();
+    counter(manifest).fields.push({ key: "done", name: { en: "Done" }, kind: "checkbox" });
+    counter(manifest).layouts.detail.main = [
+      { type: "field", props: { field: "color", required: true } },
+      { type: "field", props: { field: "count", required: true } },
+      { type: "field", props: { field: "done", required: true } },
+      { type: "field", props: { field: "name", required: true } },
+      { type: "field", props: { field: "min", required: false } },
+    ];
+    const text = messages(validateManifest(manifest));
+    const at = "/tool/items/0/layouts/detail/main";
+    expect(text).not.toContain(`${at}/0`);
+    expect(text).toContain(`${at}/1/props/required: 'count' is a counter field, which is never empty`);
+    expect(text).toContain(`${at}/2/props/required: 'done' is a checkbox field, which is never empty`);
+    expect(text).toContain(`${at}/3/props/required: only a field 'counter' declares can be required, and 'name' is every row's`);
+    expect(text).not.toContain(`${at}/4`);
+  });
+
+  it("holds a layout to its parts and depth", () => {
+    const deep = countersManifest();
+    let part: LayoutDetailPart = { type: "field", props: { field: "name" } };
+    for (let depth = 1; depth < 7; depth += 1) part = { type: "section", children: [part] };
+    counter(deep).layouts.detail = { main: [part] };
+    expect(messages(validateManifest(deep))).toContain("/tool/items/0/layouts/detail: nests parts 7 deep, deeper than 6");
+    part = (part as { children: LayoutDetailPart[] }).children[0];
+    counter(deep).layouts.detail = { main: [part] };
+    expect(messages(validateManifest(deep))).toBe("");
+
+    const wide = countersManifest();
+    const half = Array.from({ length: 151 });
+    tool(wide).layouts.list = { kind: "table", columns: half.map(() => "name") };
+    counter(wide).layouts.detail = {
+      header: half.map(() => ({ type: "field", props: { field: "count" } })),
+      side: half.map(() => ({ type: "byline" })),
+    };
+    expect(messages(validateManifest(wide))).toContain("/tool/items/0/layouts/detail: holds 302 parts, more than 300");
+    expect(messages(validateManifest(wide))).not.toContain("/tool/layouts/list");
+    tool(wide).layouts.list = { kind: "grid", card: { type: "card", children: Array.from({ length: 300 }, () => ({ type: "properties" })) } };
+    expect(messages(validateManifest(wide))).toContain("/tool/layouts/list: holds 301 parts, more than 300");
+  });
+
   it("refuses a tool outside the contract", () => {
     const changes: Array<(tool: Record<string, any>) => void> = [
       (tool) => (tool.icon = "unicorn"),
@@ -2229,6 +2310,21 @@ describe("a tool plug-in", () => {
       (tool) => (tool.items[0].open_while = { field: "count" }),
       (tool) => delete tool.actions[0].write,
       (tool) => (tool.actions[0].on = ["counter"]),
+      (tool) => delete tool.layouts,
+      (tool) => delete tool.items[0].layouts.detail,
+      (tool) => (tool.layouts.list = { kind: "board", card: tool.layouts.list.card }),
+      (tool) => (tool.layouts.list = { kind: "grid", columns: ["name"] }),
+      (tool) => (tool.layouts.list = { kind: "table", columns: ["name"], card: { type: "card" } }),
+      (tool) => (tool.layouts.list = { kind: "table", columns: [] }),
+      (tool) => (tool.layouts.list.presets = []),
+      (tool) => (tool.layouts.detail = {}),
+      (tool) => tool.layouts.detail.main.push({ type: "plugin", props: { plugin: 1, part: "badge" } }),
+      (tool) => tool.layouts.detail.main.push({ type: "status" }),
+      (tool) => tool.layouts.detail.main.push({ type: "field", props: { field: "property:12" } }),
+      (tool) => tool.layouts.detail.side.push({ type: "section", props: { title: "x".repeat(101) } }),
+      (tool) => tool.layouts.list.card.children.push({ type: "stack", props: { gap: "large" } }),
+      (tool) => tool.layouts.list.card.children.push({ type: "byline" }),
+      (tool) => tool.items[0].layouts.detail.header.push({ type: "card" }),
     ];
     for (const change of changes) {
       const manifest = countersManifest();
