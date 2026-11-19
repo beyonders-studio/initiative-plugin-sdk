@@ -944,11 +944,41 @@ describe("the scopes a plug-in asks for", () => {
     }
   });
 
+  it("takes a tool plug-in's scopes, by its tool's kind", () => {
+    expect(messages(asking(["counter_group.tsjvtcm0s7gv2x:read", "deck.a7m2qx8n4tvb9c:write"]))).toBe("");
+  });
+
+  it("refuses a tool plug-in's scope that names no kind", () => {
+    for (const scope of [
+      "counter_group.TSJVTCM0S7GV2X:read",
+      "counter_group.tsjvtcm0s7gv2:read",
+      "counter_group.tsjvtcm0s7gvi2:read",
+      "counter_group:read",
+      "counter_group.tsjvtcm0s7gv2x:admin",
+      "Counter.tsjvtcm0s7gv2x:read",
+      "_counter.tsjvtcm0s7gv2x:read",
+      "a_key_of_eighteen_.tsjvtcm0s7gv2x:read",
+    ]) {
+      const problems = asking([scope]);
+      expect(problems.length, scope).toBeGreaterThan(0);
+      expect(problems[0].where, scope).toBe("/service/scopes/0");
+    }
+  });
+
   it("takes a declarative plug-in's read scopes at the top level, and a container's only in its service block", () => {
     const declarative = manifestOf(issuesPlugin());
-    declarative.scopes = ["projects:read", "members:read", "projects:write", "initiatives:moderate", "community:admin", "plugins:acme.github"];
+    declarative.scopes = [
+      "projects:read",
+      "members:read",
+      "counter_group.tsjvtcm0s7gv2x:read",
+      "projects:write",
+      "initiatives:moderate",
+      "community:admin",
+      "plugins:acme.github",
+      "counter_group.tsjvtcm0s7gv2x:write",
+    ];
     expect(messages(validateManifest(declarative, { publicId: "acme.issues" }))).toBe(
-      [2, 3, 4, 5]
+      [3, 4, 5, 6, 7]
         .map(
           (index) =>
             `/scopes/${index}: a declarative plug-in asks only for read scopes: ` +
