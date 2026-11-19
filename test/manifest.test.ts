@@ -19,7 +19,7 @@ import {
   type Manifest,
   type PartNode,
 } from "../src/manifest.js";
-import { pluginDocument, toolKeyProblem } from "../src/validate.js";
+import { pluginDocument, presetSlugProblem, toolKeyProblem } from "../src/validate.js";
 import { CAPS, FIELD_KINDS, SCOPES, type FieldKind } from "../src/contract.js";
 import { manifestOf } from "../src/define.js";
 import { countersManifest, countersTool } from "./support/counters.js";
@@ -2079,7 +2079,7 @@ describe("a tool plug-in", () => {
       name: { en: key },
       ...(parent ? { parent } : {}),
       fields: [{ key: "note", name: { en: "Note" }, kind: "text" as const }],
-      layouts: { list: { kind: "table" as const, columns: ["note"] }, detail: { main: [{ type: "field" as const, props: { field: "note" } }] } },
+      layouts: { lists: [{ kind: "table" as const, columns: ["note"] }], detail: { main: [{ type: "field" as const, props: { field: "note" } }] } },
     });
     tool(manifest).items!.push(item("tally", "counter"), item("mark", "tally"), item("counter_group"));
     const text = messages(validateManifest(manifest));
@@ -2127,6 +2127,7 @@ describe("a tool plug-in", () => {
       ["date", "2026-02-28"],
       ["datetime", "2026-02-28T09:30:00+13:00"],
       ["color", "#A1b2C3"],
+      ["color", "random"],
     ];
     const misfits: Array<[string, unknown, string]> = [
       ["text", 1, "a text field's default is a string"],
@@ -2137,7 +2138,8 @@ describe("a tool plug-in", () => {
       ["date", "2026-02-30", "a date field's default is a 'YYYY-MM-DD' date"],
       ["date", "2026-2-28", "a date field's default is a 'YYYY-MM-DD' date"],
       ["datetime", "2026-02-28T09:30:00", "a datetime field's default is an ISO 8601 date and time with its offset"],
-      ["color", "#12345g", "a color field's default is '#rrggbb'"],
+      ["color", "#12345g", "a color field's default is '#rrggbb' or 'random'"],
+      ["color", "Random", "a color field's default is '#rrggbb' or 'random'"],
       ["user_reference", "me", "a person is never a default"],
       ["counter", 3, "a counter field starts at its counter's 'initial', not at a default"],
     ];
@@ -2181,7 +2183,7 @@ describe("a tool plug-in", () => {
     const at = "/tool/items/0/open_while";
     expect(condition({ field: "done", is: false })).toBe("");
     expect(condition({ field: "due", not_passed: true })).toBe("");
-    expect(condition({ field: "view_mode", in: ["number", "progress_bar"] })).toBe("");
+    expect(condition({ field: "view_mode", in: ["number", "bar"] })).toBe("");
     expect(condition({ field: "count", at_least: 0 })).toBe("");
     expect(condition({ field: "count", below: 10, above: 0 })).toContain(
       `${at}: an open condition is one condition on its field, not 'below' and 'above'`
@@ -2221,17 +2223,17 @@ describe("a tool plug-in", () => {
     const manifest = countersManifest();
     tool(manifest).fields!.push({ key: "tags", name: { en: "Tags" }, kind: "text" });
     const layouts = counter(manifest).layouts;
-    layouts.list.card!.children!.push(
+    layouts.lists[0].card!.children!.push(
       { type: "field", props: { field: "description" } },
       { type: "stack", children: [{ type: "field", props: { field: "created_by" } }] }
     );
     layouts.detail.side!.push({ type: "field", props: { field: "updated_at" } }, { type: "field", props: { field: "total" } });
-    tool(manifest).layouts.list = { kind: "table", columns: ["name", "count", "updated_at"] };
+    tool(manifest).layouts.lists[1] = { kind: "table", columns: ["name", "count", "updated_at"] };
     const text = messages(validateManifest(manifest));
     expect(text).toContain("/tool/fields/1/key: 'tags' is a field every tool's rows have");
-    expect(text).toContain("/tool/items/0/layouts/list/card/children/2/props/field: 'description' is not a field of 'counter'");
+    expect(text).toContain("/tool/items/0/layouts/lists/0/card/children/2/props/field: 'description' is not a field of 'counter'");
     expect(text).toContain("/tool/items/0/layouts/detail/side/3/props/field: 'total' is not a field of 'counter'");
-    expect(text).toContain("/tool/layouts/list/columns/1: 'count' is not a field of 'counter_group'");
+    expect(text).toContain("/tool/layouts/lists/1/columns/1: 'count' is not a field of 'counter_group'");
     expect(text).not.toContain("children/3");
     expect(text).not.toContain("side/2");
     expect(text).not.toContain("columns/0");
@@ -2242,10 +2244,10 @@ describe("a tool plug-in", () => {
     const looks = (displays: Record<string, string>) => {
       const manifest = countersManifest();
       counter(manifest).fields.push({ key: "rating", name: { en: "Rating" }, kind: "scale" });
-      counter(manifest).layouts.list.displays = displays as never;
+      counter(manifest).layouts.lists[0].displays = displays as never;
       return messages(validateManifest(manifest));
     };
-    const at = "/tool/items/0/layouts/list/displays";
+    const at = "/tool/items/0/layouts/lists/0/displays";
     expect(looks({ count: "clock", rating: "stars" })).toBe("");
     expect(looks({ count: "stars" })).toContain(`${at}/count: a counter field is drawn as 'number', 'bar', 'clock', not 'stars'`);
     expect(looks({ rating: "clock" })).toContain(`${at}/rating: a scale field is drawn as 'number', 'stars', 'bar', not 'clock'`);
@@ -2285,15 +2287,163 @@ describe("a tool plug-in", () => {
 
     const wide = countersManifest();
     const half = Array.from({ length: 151 });
-    tool(wide).layouts.list = { kind: "table", columns: half.map(() => "name") };
+    tool(wide).layouts.lists = [{ kind: "table", columns: half.map(() => "name") }];
     counter(wide).layouts.detail = {
       header: half.map(() => ({ type: "field", props: { field: "count" } })),
       side: half.map(() => ({ type: "byline" })),
     };
     expect(messages(validateManifest(wide))).toContain("/tool/items/0/layouts/detail: holds 302 parts, more than 300");
-    expect(messages(validateManifest(wide))).not.toContain("/tool/layouts/list");
-    tool(wide).layouts.list = { kind: "grid", card: { type: "card", children: Array.from({ length: 300 }, () => ({ type: "properties" })) } };
-    expect(messages(validateManifest(wide))).toContain("/tool/layouts/list: holds 301 parts, more than 300");
+    expect(messages(validateManifest(wide))).not.toContain("/tool/layouts/lists");
+    tool(wide).layouts.lists = [{ kind: "grid", card: { type: "card", children: Array.from({ length: 300 }, () => ({ type: "properties" })) } }];
+    expect(messages(validateManifest(wide))).toContain("/tool/layouts/lists/0: holds 301 parts, more than 300");
+  });
+
+  it("gives a required field a default", () => {
+    const manifest = countersManifest();
+    tool(manifest).fields!.push(
+      { key: "owner", name: { en: "Owner" }, kind: "user_reference", required: true },
+      { key: "note", name: { en: "Note" }, kind: "text", required: true },
+      { key: "done", name: { en: "Done" }, kind: "checkbox", default: false, required: true },
+      { key: "tally", name: { en: "Tally" }, kind: "counter", required: true },
+      { key: "aside", name: { en: "Aside" }, kind: "text", required: false }
+    );
+    const text = messages(validateManifest(manifest));
+    expect(text).toContain("/tool/fields/1/required: a person is never a default, so a user_reference field is never required");
+    expect(text).toContain("/tool/fields/2/required: a required field has a default, which rows added without it and rows already there take");
+    expect(text).not.toContain("/tool/fields/3");
+    expect(text).not.toContain("/tool/fields/4");
+    expect(text).not.toContain("/tool/fields/5");
+  });
+
+  it("checks a table's rows in the open condition's comparisons", () => {
+    const checks = (where: "tool" | "item", list: object[]) => {
+      const manifest = countersManifest();
+      tool(manifest).fields!.push(
+        { key: "low", name: { en: "Low" }, kind: "number", default: 5 },
+        { key: "high", name: { en: "High" }, kind: "number", default: 1 }
+      );
+      counter(manifest).fields.push({ key: "label", name: { en: "Label" }, kind: "text" });
+      (where === "tool" ? tool(manifest) : counter(manifest)).checks = list as never;
+      return messages(validateManifest(manifest));
+    };
+    expect(checks("item", [{ field: "count", at_least: { field: "min" } }, { field: "max", not_equals: 0 }])).toBe("");
+    expect(checks("tool", [{ field: "low", below: 10 }])).toBe("");
+    const item = "/tool/items/0/checks";
+    expect(checks("item", [{ field: "step", above: 0, below: 10 }])).toContain(
+      `${item}/0: a check is one comparison on its field, not 'above' and 'below'`
+    );
+    expect(checks("item", [{ field: "total", above: 0 }])).toContain(`${item}/0/field: 'total' is not a field of this table`);
+    expect(checks("tool", [{ field: "count", above: 0 }])).toContain("/tool/checks/0/field: 'count' is not a field of this table");
+    expect(checks("item", [{ field: "label", above: 0 }])).toContain(
+      `${item}/0/above: 'above' reads a number or counter field, and 'label' is a text field`
+    );
+    expect(checks("item", [{ field: "min", at_most: { field: "color" } }])).toContain(
+      `${item}/0/at_most/field: 'color' is not a number or counter field of this table`
+    );
+    expect(checks("item", [{ field: "step", above: 1 }])).toContain(`${item}/0: a new row starts with 'step' at 1, which is not above 1`);
+    expect(checks("tool", [{ field: "low", at_most: { field: "high" } }])).toContain(
+      "/tool/checks/0: a new row starts with 'low' at 5, which is not at most 1"
+    );
+  });
+
+  it("lists a table in kinds of its own", () => {
+    const manifest = countersManifest();
+    const lists = counter(manifest).layouts.lists;
+    lists.push({ kind: "masonry", card: { type: "card", children: [{ type: "field", props: { field: "name" } }] } });
+    expect(messages(validateManifest(manifest))).toBe("");
+    lists[1] = { kind: "grid", card: { type: "card" } };
+    expect(messages(validateManifest(manifest))).toContain("/tool/items/0/layouts/lists/1/kind: 'counter' is listed as a grid twice");
+  });
+
+  it("takes a field's look from a select field whose options are looks", () => {
+    const looks = (displays: Record<string, unknown>, options?: string[]) => {
+      const manifest = countersManifest();
+      counter(manifest).fields.push(
+        { key: "rating", name: { en: "Rating" }, kind: "scale" },
+        { key: "label", name: { en: "Label" }, kind: "text" }
+      );
+      if (options) field(manifest, "view_mode").options = options.map((value) => ({ value, label: { en: value } }));
+      counter(manifest).layouts.lists = [{ ...counter(manifest).layouts.lists[0], displays: displays as never }];
+      return messages(validateManifest(manifest));
+    };
+    const at = "/tool/items/0/layouts/lists/0/displays";
+    expect(looks({ count: { from: "view_mode" } })).toBe("");
+    expect(looks({ rating: { from: "view_mode" } }, ["number", "stars", "bar"])).toBe("");
+    expect(looks({ count: { from: "label" } })).toContain(`${at}/count/from: 'label' is not a select field of 'counter'`);
+    expect(looks({ count: { from: "nothing" } })).toContain(`${at}/count/from: 'nothing' is not a select field of 'counter'`);
+    expect(looks({ count: { from: "view_mode" } }, ["number", "dial"])).toContain(
+      `${at}/count/from: 'view_mode' has the option 'dial', and a counter field is drawn as 'number', 'bar', 'clock'`
+    );
+    expect(looks({ rating: { from: "view_mode" } })).toContain(
+      `${at}/rating/from: 'view_mode' has the option 'clock', and a scale field is drawn as 'number', 'stars', 'bar'`
+    );
+    expect(looks({ label: { from: "view_mode" } })).toContain(`${at}/label: 'label' is a text field, and only a scale or counter field has a look`);
+  });
+
+  it("tints a card by a colour field and previews the items under its row", () => {
+    const manifest = countersManifest();
+    tool(manifest).items!.push({
+      key: "tally",
+      name: { en: "Tally" },
+      parent: "counter",
+      fields: [{ key: "note", name: { en: "Note" }, kind: "text" }],
+      layouts: { lists: [{ kind: "table", columns: ["note"] }], detail: { main: [{ type: "field", props: { field: "note" } }] } },
+    });
+    const groupCard = tool(manifest).layouts.lists[0].card!;
+    groupCard.props = { tint: "description" };
+    groupCard.children!.push(
+      { type: "items", props: { item: "tally", fields: ["note"], limit: 2 } },
+      { type: "items", props: { item: "counter", fields: ["count", "note", "count"], limit: 2, tint: "view_mode" } }
+    );
+    counter(manifest).layouts.lists[0].card!.children!.push(
+      { type: "items", props: { item: "tally", fields: ["note", "created_at"], limit: 8 } },
+      { type: "card", props: { tint: "colour" } }
+    );
+    const text = messages(validateManifest(manifest));
+    const group = "/tool/layouts/lists/0/card";
+    expect(text).toContain(`${group}/props/tint: 'description' is not a color field of 'counter_group'`);
+    expect(text).toContain(`${group}/children/3/props/item: 'tally' is not an item table directly under 'counter_group'`);
+    expect(text).toContain(`${group}/children/4/props/fields/1: 'note' is not a field of 'counter'`);
+    expect(text).toContain(`${group}/children/4/props/fields/2: 'count' is shown twice`);
+    expect(text).toContain(`${group}/children/4/props/tint: 'view_mode' is not a color field of 'counter'`);
+    expect(text).not.toContain(`${group}/children/0`);
+    expect(text).not.toContain(`${group}/children/4/props/fields/0`);
+    const item = "/tool/items/0/layouts/lists/0/card";
+    expect(text).not.toContain(`${item}/props`);
+    expect(text).not.toContain(`${item}/children/2`);
+    expect(text).toContain(`${item}/children/3/props/tint: 'colour' is not a color field of 'counter'`);
+  });
+
+  it("sorts a preset by fields that sort, each once", () => {
+    const presets = (list: object[]) => {
+      const manifest = countersManifest();
+      counter(manifest).fields.push({ key: "due", name: { en: "Due" }, kind: "date" });
+      counter(manifest).layouts.lists[0].presets = list as never;
+      return messages(validateManifest(manifest));
+    };
+    const sorted = (...fields: string[]) => [{ slug: "mine", name: { en: "Mine" }, sort: fields.map((each) => ({ field: each })) }];
+    const at = "/tool/items/0/layouts/lists/0/presets";
+    expect(presets(sorted("due", "created_at", "updated_at", "max"))).toBe("");
+    expect(presets(sorted("color"))).toContain(`${at}/0/sort/0/field: 'color' is a color field, which does not sort`);
+    expect(presets(sorted("view_mode"))).toContain(`${at}/0/sort/0/field: 'view_mode' is a select field, which does not sort`);
+    expect(presets(sorted("tags"))).toContain(`${at}/0/sort/0/field: 'tags' is not a field of 'counter' that sorts`);
+    expect(presets(sorted("created_by"))).toContain(`${at}/0/sort/0/field: 'created_by' is not a field of 'counter' that sorts`);
+    expect(presets(sorted("description"))).toContain(`${at}/0/sort/0/field: 'description' is not a field of 'counter' that sorts`);
+    expect(presets(sorted("count", "name", "count"))).toContain(`${at}/0/sort/2/field: 'count' is sorted by twice`);
+    expect(presets([...sorted("name"), ...sorted("count")])).toContain(`${at}/1/slug: 'mine' is a preset twice`);
+  });
+
+  it("checks a preset's slug one character at a time", () => {
+    expect(presetSlugProblem("by-count")).toBeUndefined();
+    expect(presetSlugProblem("2")).toBeUndefined();
+    expect(presetSlugProblem("x".repeat(64))).toBeUndefined();
+    expect(presetSlugProblem("")).toBe("a slug is not empty");
+    expect(presetSlugProblem("x".repeat(65))).toBe("a slug is at most 64 characters");
+    expect(presetSlugProblem("-count")).toBe("a slug's words are joined by single '-', with none first");
+    expect(presetSlugProblem("by--count")).toBe("a slug's words are joined by single '-', with none first");
+    expect(presetSlugProblem("count-")).toBe("a slug does not end in '-'");
+    expect(presetSlugProblem("by_count")).toBe("a slug holds lower-case letters, digits and '-', not '_'");
+    expect(presetSlugProblem("byCount")).toBe("a slug holds lower-case letters, digits and '-', not 'C'");
   });
 
   it("refuses a tool outside the contract", () => {
@@ -2312,18 +2462,46 @@ describe("a tool plug-in", () => {
       (tool) => (tool.actions[0].on = ["counter"]),
       (tool) => delete tool.layouts,
       (tool) => delete tool.items[0].layouts.detail,
-      (tool) => (tool.layouts.list = { kind: "board", card: tool.layouts.list.card }),
-      (tool) => (tool.layouts.list = { kind: "grid", columns: ["name"] }),
-      (tool) => (tool.layouts.list = { kind: "table", columns: ["name"], card: { type: "card" } }),
-      (tool) => (tool.layouts.list = { kind: "table", columns: [] }),
-      (tool) => (tool.layouts.list.presets = []),
+      (tool) => (tool.layouts.list = tool.layouts.lists[0]),
+      (tool) => (tool.layouts.lists = []),
+      (tool) => (tool.layouts.lists = Array.from({ length: 4 }, () => tool.layouts.lists[0])),
+      (tool) => (tool.layouts.lists[0] = { kind: "board", card: tool.layouts.lists[0].card }),
+      (tool) => (tool.layouts.lists[0] = { kind: "grid", columns: ["name"] }),
+      (tool) => (tool.layouts.lists[0] = { kind: "masonry", columns: ["name"] }),
+      (tool) => (tool.layouts.lists[1] = { kind: "table", columns: ["name"], card: { type: "card" } }),
+      (tool) => (tool.layouts.lists[1] = { kind: "table", columns: [] }),
+      (tool) => (tool.layouts.lists[0].presets = []),
+      (tool) => (tool.layouts.lists[0].presets = Array.from({ length: 21 }, (_, i) => ({ slug: `p${i}`, name: { en: "P" }, sort: [{ field: "name" }] }))),
+      (tool) => (tool.layouts.lists[0].presets = [{ slug: "by-name", name: { en: "By name" }, sort: [] }]),
+      (tool) => (tool.layouts.lists[0].presets = [{ slug: "by-name", sort: [{ field: "name" }] }]),
+      (tool) => (tool.layouts.lists[0].presets = [{ slug: "By-Name", name: { en: "By name" }, sort: [{ field: "name" }] }]),
+      (tool) => (tool.layouts.lists[0].presets = [{ slug: "by-name", name: { en: "By name" }, sort: [{ field: "name", dir: "up" }] }]),
+      (tool) =>
+        (tool.layouts.lists[0].presets = [
+          { slug: "many", name: { en: "Many" }, sort: ["name", "created_at", "updated_at", "description", "tags"].map((field) => ({ field })) },
+        ]),
+      (tool) => (tool.items[0].layouts.lists[0].displays = { count: { from: "view_mode", or: "bar" } }),
+      (tool) => (tool.items[0].layouts.lists[0].displays = { count: {} }),
+      (tool) => (tool.layouts.lists[0].card.props = { tint: "color", tone: "muted" }),
+      (tool) => (tool.layouts.lists[0].card.children[0].props.limit = 9),
+      (tool) => (tool.layouts.lists[0].card.children[0].props.limit = 0),
+      (tool) => delete tool.layouts.lists[0].card.children[0].props.limit,
+      (tool) => (tool.layouts.lists[0].card.children[0].props.fields = []),
+      (tool) => (tool.layouts.lists[0].card.children[0].props.fields = ["name", "count", "min", "max", "step"]),
+      (tool) => tool.layouts.detail.main.push({ type: "items", props: { item: "counter", fields: ["name"], limit: 2 } }),
+      (tool) => (tool.items[0].checks = []),
+      (tool) => (tool.items[0].checks = Array.from({ length: 9 }, () => ({ field: "step", above: 0 }))),
+      (tool) => (tool.items[0].checks = [{ field: "step" }]),
+      (tool) => (tool.items[0].checks = [{ field: "step", is: true }]),
+      (tool) => (tool.items[0].checks = [{ field: "step", above: "0" }]),
+      (tool) => (tool.items[0].fields[3].required = "yes"),
       (tool) => (tool.layouts.detail = {}),
       (tool) => tool.layouts.detail.main.push({ type: "plugin", props: { plugin: 1, part: "badge" } }),
       (tool) => tool.layouts.detail.main.push({ type: "status" }),
       (tool) => tool.layouts.detail.main.push({ type: "field", props: { field: "property:12" } }),
       (tool) => tool.layouts.detail.side.push({ type: "section", props: { title: "x".repeat(101) } }),
-      (tool) => tool.layouts.list.card.children.push({ type: "stack", props: { gap: "large" } }),
-      (tool) => tool.layouts.list.card.children.push({ type: "byline" }),
+      (tool) => tool.layouts.lists[0].card.children.push({ type: "stack", props: { gap: "large" } }),
+      (tool) => tool.layouts.lists[0].card.children.push({ type: "byline" }),
       (tool) => tool.items[0].layouts.detail.header.push({ type: "card" }),
     ];
     for (const change of changes) {
