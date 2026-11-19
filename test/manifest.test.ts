@@ -2346,6 +2346,26 @@ describe("a tool plug-in", () => {
     );
   });
 
+  it("checks a counter's start, not a default, against a table's checks", () => {
+    const checks = (initial: number | string | undefined, list: object[]) => {
+      const manifest = countersManifest();
+      field(manifest, "count").counter!.initial = initial;
+      field(manifest, "initial_count").default = 7;
+      counter(manifest).checks = list as never;
+      return messages(validateManifest(manifest));
+    };
+    const at = "/tool/items/0/checks/0";
+    expect(checks(3, [{ field: "count", at_most: 3 }])).toBe("");
+    expect(checks(5, [{ field: "count", at_most: 3 }])).toContain(`${at}: a new row starts with 'count' at 5, which is not at most 3`);
+    expect(checks("initial_count", [{ field: "count", below: 5 }])).toContain(
+      `${at}: a new row starts with 'count' at 7, which is not below 5`
+    );
+    expect(checks("initial_count", [{ field: "step", above: { field: "count" } }])).toContain(
+      `${at}: a new row starts with 'step' at 1, which is not above 7`
+    );
+    expect(checks(undefined, [{ field: "count", at_least: 1 }])).toContain(`${at}: a new row starts with 'count' at 0, which is not at least 1`);
+  });
+
   it("lists a table in kinds of its own", () => {
     const manifest = countersManifest();
     const lists = counter(manifest).layouts.lists;

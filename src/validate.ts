@@ -1482,6 +1482,23 @@ const COMPARE: Record<(typeof TOOL_COMPARISONS)[number], (left: number, right: n
 };
 
 /**
+ * What each of a table's fields holds on a new row that names none: its
+ * default, and a counter its counter's 'initial' (a number, the default of the
+ * number field it names, or 0 when absent), as Initiative reads them.
+ */
+function effectiveDefaults(fields: readonly ToolField[]): Map<string, unknown> {
+  const declared = new Map(fields.map((field) => [field.key, field.default]));
+  return new Map(
+    fields.map((field) => {
+      if (field.kind !== "counter") return [field.key, field.default];
+      const initial = field.counter?.initial;
+      const start = typeof initial === "string" ? declared.get(initial) : initial;
+      return [field.key, start ?? 0];
+    })
+  );
+}
+
+/**
  * What is wrong with an item's open condition or a table's check: it is one
  * condition on one of the `table`'s fields (`noun` is "item" or "table"), of a
  * kind that fits it; a comparison's other side is a number, or a number or
@@ -1519,8 +1536,9 @@ function conditionProblems(
     if (typeof operand === "object" && !TOOL_NUMBERS.has(other?.kind as ToolFieldKind)) {
       push(`${where}/${term}/field`, `'${operand.field}' is not a number or counter field of this ${noun}`);
     }
-    const left = field.default;
-    const right = typeof operand === "number" ? operand : other?.default;
+    const defaults = effectiveDefaults([...fields.values()]);
+    const left = defaults.get(field.key);
+    const right = typeof operand === "number" ? operand : defaults.get(operand?.field ?? "");
     if (noun === "table" && typeof left === "number" && typeof right === "number" && !COMPARE[comparison](left, right)) {
       push(where, `a new row starts with '${field.key}' at ${left}, which is not ${term.replace("_", " ")} ${right}`);
     }
