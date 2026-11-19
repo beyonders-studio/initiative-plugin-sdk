@@ -176,7 +176,7 @@ export const CAPS = {
   dashboardGridColumns: 12,
   dashboardBindingParams: 12,
   identifierLength: 64,
-  toolKeyLength: 40,
+  toolKeyLength: 17,
   layoutNodes: 300,
   layoutDepth: 6,
   layoutBytes: 65536,
@@ -1573,7 +1573,8 @@ export interface Tool {
 
 /**
  * A key a tool declares: a lower-case letter, then lower-case letters, digits
- * and '_', at most 40 characters. Initiative builds table and column names from
+ * and '_', at most 17 characters, so a kind (the key, '.', the plug-in's uid)
+ * fits Initiative's kind columns. Initiative builds table and column names from
  * it, so a field's key is never a universal column's name ('toolColumn') nor a
  * field every row has ('toolLayoutField'), and never ends in '_id', which
  * Initiative's own keys to a parent end in.

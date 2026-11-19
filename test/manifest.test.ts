@@ -2041,9 +2041,9 @@ describe("a tool plug-in", () => {
 
   it("checks a key one character at a time", () => {
     expect(toolKeyProblem("counter_group")).toBeUndefined();
-    expect(toolKeyProblem("x".repeat(40))).toBeUndefined();
+    expect(toolKeyProblem("x".repeat(17))).toBeUndefined();
     expect(toolKeyProblem("")).toBe("a key is not empty");
-    expect(toolKeyProblem("x".repeat(41))).toBe("a key is at most 40 characters");
+    expect(toolKeyProblem("x".repeat(18))).toBe("a key is at most 17 characters");
     expect(toolKeyProblem("_counter")).toBe("a key starts with a lower-case letter");
     expect(toolKeyProblem("2counter")).toBe("a key starts with a lower-case letter");
     expect(toolKeyProblem("Counter")).toBe("a key starts with a lower-case letter");
