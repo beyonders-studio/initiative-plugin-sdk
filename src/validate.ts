@@ -16,8 +16,10 @@
  * part, action and endpoint names, the placeholders in a part's text, and a
  * part's size and depth, and a tool plug-in's terms: the blocks it may carry,
  * its keys, what its items sit under, the kinds its fields' terms and
- * defaults fit, what its open conditions and actions name, and what its
- * layouts name, the looks they draw fields in and their size and depth.
+ * defaults fit, which of its fields are required, what its open conditions,
+ * checks and actions name, and what its layouts name: the looks they draw
+ * fields in, the colours they tint by, the items they preview, the fields
+ * their presets sort by, the kinds of their lists and their size and depth.
  *
  * {@link validateManifest} runs the schema and then every one of those except
  * the byte caps. It also reports every term the contract does not declare: a
@@ -46,6 +48,7 @@ import {
   PLATFORM_CODES,
   TOOL_COLUMNS,
   TOOL_LAYOUT_FIELDS,
+  TOOL_SORT_FIELDS,
   type Endpoint,
   type FieldDisplay,
   type Feature,
@@ -55,9 +58,11 @@ import {
   type Manifest,
   type PartNode,
   type Requires,
+  type ToolCheck,
   type ToolField,
   type ToolFieldKind,
   type ToolLayouts,
+  type ToolOpenWhile,
   type ToolOperand,
   type VendorRequest,
 } from "./contract.js";
@@ -1283,7 +1288,9 @@ function toolDefaultProblem(field: ToolField): string | undefined {
         ? undefined
         : "a datetime field's default is an ISO 8601 date and time with its offset";
     case "color":
-      return typeof value === "string" && isColor(value) ? undefined : "a color field's default is '#rrggbb'";
+      return value === "random" || (typeof value === "string" && isColor(value))
+        ? undefined
+        : "a color field's default is '#rrggbb' or 'random'";
     case "number":
     case "currency":
       return typeof value === "number" && Number.isFinite(value) ? undefined : `a ${kind} field's default is a number`;
@@ -1313,8 +1320,9 @@ function toolDefaultProblem(field: ToolField): string | undefined {
  * and nothing that serves or calls; only a tool plug-in carries a tool. Its
  * keys are well formed, unique where they must be, and never a universal
  * column; its items sit under the tool or under an item that does; each
- * field's options, currency, counter and default fit its kind; an open
- * condition reads one of its item's fields of a kind that fits it; and every
+ * field's options, currency, counter and default fit its kind, and a required
+ * field has a default; an open condition reads one of its item's fields of a
+ * kind that fits it, and a check one of its table's; and every
  * action runs on the tool or an item, asks for that table's fields, and
  * writes an expression that parses.
  */
@@ -1351,15 +1359,15 @@ function toolProblems(body: Manifest): ValidationProblem[] {
 
   // The tool's own rows, then each item table, with where each sits.
   const items = tool.items ?? [];
-  const tables = new Map<string, { where: string; fields: ToolField[]; layouts: ToolLayouts }>([
-    [tool.key, { where: "/tool", fields: tool.fields ?? [], layouts: tool.layouts }],
+  const tables = new Map<string, { where: string; fields: ToolField[]; checks?: ToolCheck[]; layouts: ToolLayouts }>([
+    [tool.key, { where: "/tool", fields: tool.fields ?? [], checks: tool.checks, layouts: tool.layouts }],
   ]);
   items.forEach((item, index) => {
     const where = `/tool/items/${index}`;
     key(item.key, `${where}/key`);
     if (item.key === tool.key) push(`${where}/key`, `'${item.key}' is the tool's key`);
     else if (tables.has(item.key)) push(`${where}/key`, `'${item.key}' is declared twice`);
-    else tables.set(item.key, { where, fields: item.fields, layouts: item.layouts });
+    else tables.set(item.key, { where, fields: item.fields, checks: item.checks, layouts: item.layouts });
   });
   const parents = new Map(items.map((item) => [item.key, item.parent]));
   items.forEach((item, index) => {
@@ -1418,49 +1426,28 @@ function toolProblems(body: Manifest): ValidationProblem[] {
         const problem = toolDefaultProblem(field);
         if (problem) push(`${at}/default`, problem);
       }
+      if (field.required && field.kind === "user_reference") {
+        push(`${at}/required`, "a person is never a default, so a user_reference field is never required");
+      } else if (field.required && field.kind !== "counter" && field.default === undefined) {
+        push(`${at}/required`, "a required field has a default, which rows added without it and rows already there take");
+      }
     });
   }
 
+  for (const { where, fields, checks } of tables.values()) {
+    const byKey = new Map(fields.map((field) => [field.key, field]));
+    (checks ?? []).forEach((check, index) => problems.push(...conditionProblems(check, byKey, `${where}/checks/${index}`, "table")));
+  }
+
   for (const [table, { where, fields, layouts }] of tables) {
-    problems.push(...layoutProblems(table, fields, layouts, `${where}/layouts`));
+    const under = new Map(items.filter((item) => (item.parent ?? tool.key) === table).map((item) => [item.key, item.fields]));
+    problems.push(...layoutProblems(table, fields, under, layouts, `${where}/layouts`));
   }
 
   items.forEach((item, index) => {
-    const condition = item.open_while;
-    if (!condition) return;
-    const where = `/tool/items/${index}/open_while`;
+    if (!item.open_while) return;
     const fields = new Map(item.fields.map((field) => [field.key, field]));
-    const terms = Object.keys(condition).filter((term) => term !== "field");
-    if (terms.length !== 1) {
-      push(where, `an open condition is one condition on its field, not ${terms.map((term) => `'${term}'`).join(" and ")}`);
-      return;
-    }
-    const [term] = terms;
-    const field = fields.get(condition.field);
-    if (!field) {
-      push(`${where}/field`, `'${condition.field}' is not a field of this item`);
-      return;
-    }
-    const fits = (kinds: readonly ToolFieldKind[], what: string) => {
-      if (!kinds.includes(field.kind)) push(`${where}/${term}`, `'${term}' reads ${what}, and '${field.key}' is a ${field.kind} field`);
-    };
-    if ((TOOL_COMPARISONS as readonly string[]).includes(term)) {
-      fits([...TOOL_NUMBERS], "a number or counter field");
-      const operand = condition[term as (typeof TOOL_COMPARISONS)[number]] as ToolOperand;
-      if (typeof operand === "object" && !TOOL_NUMBERS.has(fields.get(operand.field)?.kind as ToolFieldKind)) {
-        push(`${where}/${term}/field`, `'${operand.field}' is not a number or counter field of this item`);
-      }
-    } else if (term === "is") {
-      fits(["checkbox"], "a checkbox field");
-    } else if (term === "in") {
-      fits(["select"], "a select field");
-      const options = new Set((field.options ?? []).map((option) => option.value));
-      (condition.in ?? []).forEach((value, at) => {
-        if (field.kind === "select" && !options.has(value)) push(`${where}/in/${at}`, `'${value}' is not an option of '${field.key}'`);
-      });
-    } else if (term === "not_passed") {
-      fits(["date", "datetime"], "a date or datetime field");
-    }
+    problems.push(...conditionProblems(item.open_while, fields, `/tool/items/${index}/open_while`, "item"));
   });
 
   const actionIds = new Set<string>();
@@ -1484,6 +1471,73 @@ function toolProblems(body: Manifest): ValidationProblem[] {
   return problems;
 }
 
+/** Whether a comparison holds between two numbers. */
+const COMPARE: Record<(typeof TOOL_COMPARISONS)[number], (left: number, right: number) => boolean> = {
+  below: (left, right) => left < right,
+  at_most: (left, right) => left <= right,
+  above: (left, right) => left > right,
+  at_least: (left, right) => left >= right,
+  equals: (left, right) => left === right,
+  not_equals: (left, right) => left !== right,
+};
+
+/**
+ * What is wrong with an item's open condition or a table's check: it is one
+ * condition on one of the `table`'s fields (`noun` is "item" or "table"), of a
+ * kind that fits it; a comparison's other side is a number, or a number or
+ * counter field of the same table; and a check holds for the defaults a new
+ * row starts with, where both its sides have one.
+ */
+function conditionProblems(
+  condition: ToolOpenWhile | ToolCheck,
+  fields: ReadonlyMap<string, ToolField>,
+  where: string,
+  noun: "item" | "table"
+): ValidationProblem[] {
+  const problems: ValidationProblem[] = [];
+  const push = (at: string, message: string) => problems.push({ where: at, message });
+  const terms = Object.keys(condition).filter((term) => term !== "field");
+  if (terms.length !== 1) {
+    const what = noun === "item" ? "an open condition is one condition" : "a check is one comparison";
+    push(where, `${what} on its field, not ${terms.map((term) => `'${term}'`).join(" and ")}`);
+    return problems;
+  }
+  const [term] = terms;
+  const field = fields.get(condition.field);
+  if (!field) {
+    push(`${where}/field`, `'${condition.field}' is not a field of this ${noun}`);
+    return problems;
+  }
+  const fits = (kinds: readonly ToolFieldKind[], what: string) => {
+    if (!kinds.includes(field.kind)) push(`${where}/${term}`, `'${term}' reads ${what}, and '${field.key}' is a ${field.kind} field`);
+  };
+  if ((TOOL_COMPARISONS as readonly string[]).includes(term)) {
+    const comparison = term as (typeof TOOL_COMPARISONS)[number];
+    fits([...TOOL_NUMBERS], "a number or counter field");
+    const operand = (condition as Partial<Record<typeof comparison, ToolOperand>>)[comparison];
+    const other = typeof operand === "object" ? fields.get(operand.field) : undefined;
+    if (typeof operand === "object" && !TOOL_NUMBERS.has(other?.kind as ToolFieldKind)) {
+      push(`${where}/${term}/field`, `'${operand.field}' is not a number or counter field of this ${noun}`);
+    }
+    const left = field.default;
+    const right = typeof operand === "number" ? operand : other?.default;
+    if (noun === "table" && typeof left === "number" && typeof right === "number" && !COMPARE[comparison](left, right)) {
+      push(where, `a new row starts with '${field.key}' at ${left}, which is not ${term.replace("_", " ")} ${right}`);
+    }
+  } else if (term === "is") {
+    fits(["checkbox"], "a checkbox field");
+  } else if (term === "in") {
+    fits(["select"], "a select field");
+    const options = new Set((field.options ?? []).map((option) => option.value));
+    ((condition as ToolOpenWhile).in ?? []).forEach((value, at) => {
+      if (field.kind === "select" && !options.has(value)) push(`${where}/in/${at}`, `'${value}' is not an option of '${field.key}'`);
+    });
+  } else if (term === "not_passed") {
+    fits(["date", "datetime"], "a date or datetime field");
+  }
+  return problems;
+}
+
 /** The looks a scale and a counter field are drawn in on a list. */
 const TOOL_LOOKS: Partial<Record<ToolFieldKind, readonly FieldDisplay[]>> = {
   scale: ["number", "stars", "bar"],
@@ -1493,23 +1547,62 @@ const TOOL_LOOKS: Partial<Record<ToolFieldKind, readonly FieldDisplay[]>> = {
 /** The kinds of field that are never empty, so a layout never requires one. */
 const NEVER_EMPTY: ReadonlySet<ToolFieldKind> = new Set(["counter", "checkbox"]);
 
+/** The kinds of field a list sorts by: those whose values have an order. */
+const SORTABLE: ReadonlySet<ToolFieldKind> = new Set(["number", "counter", "currency", "scale", "date", "datetime", "checkbox"]);
+
+/**
+ * What is wrong with a preset's slug, or undefined: lower-case letters and
+ * digits, words joined by single '-', at most `slugLength` characters.
+ * Checked one character at a time; the schema's pattern says the same for a
+ * reader of the schema alone.
+ */
+export function presetSlugProblem(slug: string): string | undefined {
+  if (slug.length === 0) return "a slug is not empty";
+  if (slug.length > CAPS.slugLength) return `a slug is at most ${CAPS.slugLength} characters`;
+  let previous = "-";
+  for (const character of slug) {
+    if (character === "-") {
+      if (previous === "-") return "a slug's words are joined by single '-', with none first";
+    } else if (!CHARSETS.slug.includes(character)) {
+      return `a slug holds lower-case letters, digits and '-', not '${character}'`;
+    }
+    previous = character;
+  }
+  if (previous === "-") return "a slug does not end in '-'";
+  return undefined;
+}
+
 /**
  * What is wrong with one table's layouts: every field they name is one the
- * table declares or one every row has; a field drawn in a look is a scale or
- * counter field the look fits; a required field is one the table declares and
- * a person can leave empty; and each layout holds at most `layoutNodes` parts
- * (a table's columns count as parts), at most `layoutDepth` deep. Which parts
- * and props it may hold, and which list holds a card or columns, the schema
- * says.
+ * table declares or one every row has; each list is of a kind no other list
+ * of the table is; a field drawn in a look is a scale or counter field the
+ * look fits, or that a select field's every option fits; a card is tinted by
+ * a color field; a card's preview of items is of an item table directly
+ * under the table (`under`), shows that table's fields once each and is
+ * tinted by its color field; a preset's slug is unique to its list and it
+ * sorts by fields that sort, once each; a required field is one the table
+ * declares and a person can leave empty; and each layout holds at most
+ * `layoutNodes` parts (a table's columns count as parts), at most
+ * `layoutDepth` deep. Which parts and props it may hold, and which list
+ * holds a card or columns, the schema says.
  */
-function layoutProblems(table: string, fields: ToolField[], layouts: ToolLayouts, at: string): ValidationProblem[] {
+function layoutProblems(
+  table: string,
+  fields: ToolField[],
+  under: ReadonlyMap<string, ToolField[]>,
+  layouts: ToolLayouts,
+  at: string
+): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
   const push = (where: string, message: string) => problems.push({ where, message });
   const declared = new Map(fields.map((field) => [field.key, field]));
-  const names = (field: string, where: string) => {
-    if (!declared.has(field) && !(TOOL_LAYOUT_FIELDS as readonly string[]).includes(field)) {
-      push(where, `'${field}' is not a field of '${table}'`);
+  const names = (field: string, where: string, of = table, own: ReadonlyMap<string, ToolField> = declared) => {
+    if (!own.has(field) && !(TOOL_LAYOUT_FIELDS as readonly string[]).includes(field)) {
+      push(where, `'${field}' is not a field of '${of}'`);
     }
+  };
+  const tint = (field: string, where: string, of = table, own: ReadonlyMap<string, ToolField> = declared) => {
+    if (own.get(field)?.kind !== "color") push(where, `'${field}' is not a color field of '${of}'`);
   };
   // Every part of a tree, counted, with how deep it sits.
   const measure = (where: string) => {
@@ -1529,6 +1622,21 @@ function layoutProblems(table: string, fields: ToolField[], layouts: ToolLayouts
           }
         }
       }
+      if (part.type === "card" && part.props?.tint !== undefined) tint(part.props.tint, `${path}/props/tint`);
+      if (part.type === "items") {
+        const { item, fields: shown, tint: itemTint } = part.props;
+        const itemFields = under.get(item);
+        if (!itemFields) {
+          push(`${path}/props/item`, `'${item}' is not an item table directly under '${table}'`);
+        } else {
+          const own = new Map(itemFields.map((field) => [field.key, field]));
+          shown.forEach((field, index) => {
+            names(field, `${path}/props/fields/${index}`, item, own);
+            if (shown.indexOf(field) !== index) push(`${path}/props/fields/${index}`, `'${field}' is shown twice`);
+          });
+          if (itemTint !== undefined) tint(itemTint, `${path}/props/tint`, item, own);
+        }
+      }
       if ("children" in part) {
         (part.children ?? []).forEach((child, index) => visit(child, depth + 1, `${path}/children/${index}`));
       }
@@ -1540,19 +1648,58 @@ function layoutProblems(table: string, fields: ToolField[], layouts: ToolLayouts
     return { visit, done };
   };
 
-  const list = layouts.list;
-  const listed = measure(`${at}/list`);
-  if (list.card) listed.visit(list.card, 1, `${at}/list/card`);
-  (list.columns ?? []).forEach((field, index) => names(field, `${at}/list/columns/${index}`));
-  listed.done(list.columns?.length ?? 0);
-  for (const [key, look] of Object.entries(list.displays ?? {})) {
-    const where = `${at}/list/displays/${key}`;
-    const field = declared.get(key);
-    const looks = field && TOOL_LOOKS[field.kind];
-    if (!field) push(where, `'${key}' is not a field '${table}' declares`);
-    else if (!looks) push(where, `'${key}' is a ${field.kind} field, and only a scale or counter field has a look`);
-    else if (!looks.includes(look)) push(where, `a ${field.kind} field is drawn as ${looks.map((each) => `'${each}'`).join(", ")}, not '${look}'`);
-  }
+  const kinds = new Set<string>();
+  layouts.lists.forEach((list, index) => {
+    const where = `${at}/lists/${index}`;
+    if (kinds.has(list.kind)) push(`${where}/kind`, `'${table}' is listed as a ${list.kind} twice`);
+    kinds.add(list.kind);
+    const listed = measure(where);
+    if (list.card) listed.visit(list.card, 1, `${where}/card`);
+    (list.columns ?? []).forEach((field, column) => names(field, `${where}/columns/${column}`));
+    listed.done(list.columns?.length ?? 0);
+
+    for (const [key, look] of Object.entries(list.displays ?? {})) {
+      const shown = `${where}/displays/${key}`;
+      const field = declared.get(key);
+      const looks = field && TOOL_LOOKS[field.kind];
+      const lookList = (looks ?? []).map((each) => `'${each}'`).join(", ");
+      if (!field) push(shown, `'${key}' is not a field '${table}' declares`);
+      else if (!looks) push(shown, `'${key}' is a ${field.kind} field, and only a scale or counter field has a look`);
+      else if (typeof look === "string") {
+        if (!looks.includes(look)) push(shown, `a ${field.kind} field is drawn as ${lookList}, not '${look}'`);
+      } else {
+        const select = declared.get(look.from);
+        if (select?.kind !== "select") push(`${shown}/from`, `'${look.from}' is not a select field of '${table}'`);
+        else {
+          for (const option of select.options ?? []) {
+            if (!(looks as readonly string[]).includes(option.value)) {
+              push(`${shown}/from`, `'${look.from}' has the option '${option.value}', and a ${field.kind} field is drawn as ${lookList}`);
+            }
+          }
+        }
+      }
+    }
+
+    const slugs = new Set<string>();
+    (list.presets ?? []).forEach((preset, p) => {
+      const at = `${where}/presets/${p}`;
+      const problem = presetSlugProblem(preset.slug);
+      if (problem) push(`${at}/slug`, problem);
+      else if (slugs.has(preset.slug)) push(`${at}/slug`, `'${preset.slug}' is a preset twice`);
+      slugs.add(preset.slug);
+      const sorted = new Set<string>();
+      preset.sort.forEach((sort, s) => {
+        const by = `${at}/sort/${s}/field`;
+        const field = declared.get(sort.field);
+        if (sorted.has(sort.field)) push(by, `'${sort.field}' is sorted by twice`);
+        else if (field && !SORTABLE.has(field.kind)) push(by, `'${sort.field}' is a ${field.kind} field, which does not sort`);
+        else if (!field && !(TOOL_SORT_FIELDS as readonly string[]).includes(sort.field)) {
+          push(by, `'${sort.field}' is not a field of '${table}' that sorts`);
+        }
+        sorted.add(sort.field);
+      });
+    });
+  });
 
   const shown = measure(`${at}/detail`);
   for (const region of ["header", "main", "side"] as const) {
