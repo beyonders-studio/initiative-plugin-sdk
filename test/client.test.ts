@@ -267,9 +267,10 @@ describe("the plug-in API", () => {
     const error = await api.archiveEntity({ path: { entity_type: "file", entity_id: 3 } }).catch((caught) => caught);
     expect(error).toBeInstanceOf(MissingScopeError);
     expect(error.scope).toBe("files:write");
-    await expect(api.archiveEntity({ path: { entity_type: "widget" as never, entity_id: 3 } })).rejects.toThrow(
-      "entity_type is one of"
-    );
+    // Initiative takes a tool plug-in's kind here from a person, not from an installation.
+    await expect(
+      api.archiveEntity({ path: { entity_type: "counter_group.tsjvtcm0s7gv2x", entity_id: 3 } })
+    ).rejects.toThrow("entity_type is one of");
     expect(routes()).toEqual(["POST /c/0/archive/task/3"]);
   });
 
