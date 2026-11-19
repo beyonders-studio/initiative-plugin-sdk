@@ -1,6 +1,9 @@
 /** Counters, declared as a tool plug-in: the README's example. */
 
-import type { Manifest, Tool } from "../../src/manifest.js";
+import type { LayoutCardField, Manifest, Tool } from "../../src/manifest.js";
+
+/** A layout's part drawing one field. */
+const field = (key: string): LayoutCardField => ({ type: "field", props: { field: key } });
 
 export function countersTool(): Tool {
   return {
@@ -9,6 +12,20 @@ export function countersTool(): Tool {
     instance_name: { en: "Counter group" },
     icon: "gauge",
     fields: [{ key: "description", name: { en: "Description" }, kind: "text" }],
+    layouts: {
+      list: {
+        kind: "grid",
+        card: {
+          type: "card",
+          children: [field("name"), { type: "stack", props: { tone: "muted" }, children: [field("description")] }],
+        },
+      },
+      detail: {
+        header: [{ type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] }],
+        main: [field("description"), { type: "relations" }],
+        side: [{ type: "section", children: [{ type: "properties" }] }, { type: "byline" }],
+      },
+    },
     items: [
       {
         key: "counter",
@@ -37,6 +54,26 @@ export function countersTool(): Tool {
             ],
           },
         ],
+        layouts: {
+          list: {
+            kind: "grid",
+            card: { type: "card", children: [field("name"), field("count")] },
+            displays: { count: "bar" },
+          },
+          detail: {
+            header: [
+              { type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] },
+            ],
+            main: [field("count"), { type: "relations" }],
+            side: [
+              {
+                type: "section",
+                children: ["color", "min", "max", "step", "initial_count", "view_mode"].map(field),
+              },
+              { type: "section", children: [{ type: "properties" }] },
+            ],
+          },
+        },
         open_while: { field: "count", below: { field: "max" } },
       },
     ],
