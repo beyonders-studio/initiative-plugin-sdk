@@ -73,7 +73,10 @@ export interface BuiltPlugin {
 }
 
 /** What the listing writers read of a plug-in: its definition, or a {@link BuiltPlugin}'s. */
-export type ListedPlugin = Pick<AnyPlugin, "publicId" | "uid" | "name" | "scopes" | "callsPlugins" | "hosts" | "hooks" | "listing">;
+export type ListedPlugin = Pick<
+  AnyPlugin,
+  "publicId" | "uid" | "name" | "scopes" | "callsPlugins" | "hosts" | "tool" | "hooks" | "listing"
+>;
 
 /** What a definition builds: the plug-in and its manifest, or every problem that stops it. */
 export type Compiled = { plugin: ListedPlugin; manifest: Manifest; problems?: never } | { problems: string[] };
@@ -106,7 +109,11 @@ function compileBuilt(root: string, file: string): Compiled {
     return { problems: [`${file}: a built plug-in names its ${[...missing, "manifest"].join(", ")}`] };
   }
   const { manifest, ...named } = built;
-  return checked({ ...named, scopes: manifest.service?.scopes ?? manifest.scopes, hosts: manifest.hosts }, manifest, []);
+  return checked(
+    { ...named, scopes: manifest.service?.scopes ?? manifest.scopes, hosts: manifest.hosts, tool: manifest.tool },
+    manifest,
+    []
+  );
 }
 
 /**
@@ -263,12 +270,19 @@ async function bundleWidget(esbuild: Esbuild, root: string, module: string): Pro
 
 /**
  * What a definition says that its manifest does not show: a declarative plug-in
- * runs no hooks, is granted read scopes at most and uses no other plug-in, and
- * only a container plug-in's listing names an image.
+ * runs no hooks, is granted read scopes at most and uses no other plug-in, a
+ * tool plug-in runs no code at all, and only a container plug-in's listing
+ * names an image.
  */
 function kindProblems(plugin: ListedPlugin): string[] {
   const problems: string[] = [];
-  if (plugin.hosts) {
+  if (plugin.tool) {
+    if (Object.keys(plugin.hooks ?? {}).length) problems.push("hooks: a tool plug-in runs no hooks");
+    if (plugin.listing?.scopeCeiling?.length) problems.push("listing: a tool plug-in runs no code, so it is granted no scopes");
+    if (plugin.listing?.image || plugin.listing?.compose || plugin.listing?.runtime) {
+      problems.push("listing: a tool plug-in has no image, compose service or runtime");
+    }
+  } else if (plugin.hosts) {
     if (Object.keys(plugin.hooks ?? {}).length) problems.push("hooks: a declarative plug-in runs no hooks");
     if (plugin.callsPlugins) problems.push("callsPlugins: a declarative plug-in does not call Initiative, so it uses no other plug-in");
     const unread = (plugin.listing?.scopeCeiling ?? []).filter((scope) => !scope.endsWith(":read"));
@@ -371,7 +385,7 @@ function runtimeProblems(runtime: RuntimeDeclaration, entitled: boolean): string
   return problems;
 }
 
-/** The registry source listing: what the catalogue shows, this version, and the registration, a container's or a declarative plug-in's. */
+/** The registry source listing: what the catalogue shows, this version, and the registration, a container's, a declarative plug-in's or a tool plug-in's. */
 function listingSource(plugin: ListedPlugin, avatar: Buffer, images: Buffer[]): Record<string, unknown> {
   const listing = plugin.listing!;
   return {
@@ -408,11 +422,19 @@ function listingSource(plugin: ListedPlugin, avatar: Buffer, images: Buffer[]): 
   };
 }
 
-/** A listing's registration: the plug-in's kind, and a container's image, Compose service and runtime. */
+/**
+ * A listing's registration: the plug-in's kind (`tool`, `declarative` or
+ * `container`, as Initiative's registry reads it), and a container's image,
+ * Compose service and runtime.
+ */
 export function registrationOf(plugin: ListedPlugin): Record<string, unknown> {
   const listing = plugin.listing!;
   return {
-    ...(plugin.hosts ? { kind: "declarative" } : { kind: "container", image: listing.image }),
+    ...(plugin.tool
+      ? { kind: "tool" }
+      : plugin.hosts
+        ? { kind: "declarative" }
+        : { kind: "container", image: listing.image }),
     scope_ceiling: [...(listing.scopeCeiling ?? plugin.scopes ?? [])],
     ...(listing.compose ? { compose: { service: listing.compose.service, base_url: listing.compose.baseUrl } } : {}),
     ...(listing.runtime ? { runtime: runtimeOf(listing.runtime, plugin.hooks?.entitlement !== undefined) } : {}),

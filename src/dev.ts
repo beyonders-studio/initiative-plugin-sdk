@@ -1,6 +1,7 @@
 /**
- * `initiative-plugin dev --initiative <url> --api-key <key>`: a declarative plug-in
- * on your own deployment, uploaded again each time its source changes.
+ * `initiative-plugin dev --initiative <url> --api-key <key>`: a declarative or
+ * tool plug-in on your own deployment, uploaded again each time its source
+ * changes.
  *
  * Each pass builds the plug-in, packs its listing file (`pack.ts`) and uploads it
  * with its picture, as the owner whose personal API key is given: the
@@ -73,9 +74,9 @@ export async function dev(options: DevOptions): Promise<number> {
         for (const problem of compiled.problems) process.stderr.write(`${problem}\n`);
         return null;
       }
-      if (!compiled.plugin.hosts) {
+      if (!compiled.plugin.hosts && !compiled.plugin.tool) {
         process.stderr.write(
-          "dev uploads a declarative plug-in; pack a container plug-in's listing and register its service on the deployment\n"
+          "dev uploads a declarative or tool plug-in; pack a container plug-in's listing and register its service on the deployment\n"
         );
         return 1;
       }

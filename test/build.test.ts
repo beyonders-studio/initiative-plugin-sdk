@@ -90,6 +90,22 @@ export default definePlugin({
 `;
 }
 
+/** Counters as a tool plug-in, with `listing` holding `extra`. */
+function tool(extra = ""): string {
+  return `
+import { definePlugin } from ${JSON.stringify(sdk)};
+import { countersTool } from ${JSON.stringify(join(here, "support", "counters.js"))};
+
+export default definePlugin({
+  publicId: "acme.tracker",
+  uid: "K7M2QX8N4TVB9C",
+  name: "Tracker",
+  tool: countersTool(),
+  listing: { publisher: "acme", summary: "Tickets.", avatar: "assets/avatar.png", version: "1.2.0", ${extra} },
+});
+`;
+}
+
 const WIDGET = `
 import { label } from "./words.js";
 
@@ -465,6 +481,37 @@ describe("a declarative plug-in", () => {
   });
 });
 
+describe("a tool plug-in", () => {
+  it("builds with no image, and registers as a tool", async () => {
+    write({ "src/plugin.ts": tool() });
+    expect(await run({ registry: "registry" })).toBe(0);
+    expect(manifest().plugin_kind).toBe("tool");
+    const listing = JSON.parse(readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8"));
+    expect(listing.registration).toEqual({ kind: "tool", scope_ceiling: [] });
+  });
+
+  it("refuses an image, a compose service, a scope ceiling and hooks", async () => {
+    write({
+      "src/plugin.ts": tool(
+        `image: "ghcr.io/acme/tracker@sha256:${"a".repeat(64)}", scopeCeiling: ["projects:read"]`
+      ).replace("tool: countersTool(),", "tool: countersTool(),\n  hooks: { installed: async () => {} },"),
+    });
+    expect(await run()).toBe(1);
+    const text = errors.join("");
+    expect(text).toContain("listing: a tool plug-in has no image, compose service or runtime");
+    expect(text).toContain("listing: a tool plug-in runs no code, so it is granted no scopes");
+    expect(text).toContain("hooks: a tool plug-in runs no hooks");
+  });
+
+  it("packs its listing file with a tool's registration", async () => {
+    write({ "src/plugin.ts": tool() });
+    expect(await pack({ root, plugin: "src/plugin.ts", out: "tracker.json" })).toBe(0);
+    const listing = JSON.parse(readFileSync(join(root, "tracker.json"), "utf-8"));
+    expect(listing.definition.tool.key).toBe("counter_group");
+    expect(listing.registration).toEqual({ kind: "tool", scope_ceiling: [] });
+  });
+});
+
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const picture = `/api/v1/marketplace/media/${digest(avatar)}`;
 
@@ -636,6 +683,21 @@ describe("dev", () => {
     expect(await running).toBe(0);
   });
 
+  it("uploads a tool plug-in", async () => {
+    const initiative = await fakeInitiative();
+    write({ "src/plugin.ts": tool() });
+    const stop = new AbortController();
+    const running = dev({ root, plugin: "src/plugin.ts", initiative: initiative.url, apiKey: "ppk_owner", signal: stop.signal });
+    try {
+      await until(() => initiative.uploads.length === 1);
+      expect(initiative.uploads[0]).toMatchObject({ registration: { kind: "tool" }, definition: { plugin_kind: "tool" } });
+    } finally {
+      stop.abort();
+      initiative.close();
+    }
+    expect(await running).toBe(0);
+  });
+
   it("stops when the deployment refuses the key, and refuses a container plug-in", async () => {
     const initiative = await fakeInitiative();
     try {
@@ -644,7 +706,7 @@ describe("dev", () => {
       expect(errors.join("")).toContain('refused the picture: 401 {"detail":"COULD_NOT_VALIDATE_CREDENTIALS"}');
       write({ "src/plugin.ts": plugin() });
       expect(await dev({ root, plugin: "src/plugin.ts", initiative: initiative.url, apiKey: "ppk_owner" })).toBe(1);
-      expect(errors.join("")).toContain("dev uploads a declarative plug-in");
+      expect(errors.join("")).toContain("dev uploads a declarative or tool plug-in");
       expect(initiative.uploads).toEqual([]);
     } finally {
       initiative.close();

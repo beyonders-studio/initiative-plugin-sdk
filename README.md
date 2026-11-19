@@ -958,6 +958,11 @@ listing: {
 },
 ```
 
+A declarative plug-in's listing names no `image`, `compose` or `runtime`, since
+Initiative makes its calls itself, and a tool plug-in's names none of those and
+no `scopeCeiling` either, since it runs no code: its registration is
+`{"kind": "tool"}`.
+
 `images` is optional: the screenshots on the listing page, in order, at most
 12. Each is a PNG, JPEG, WebP, GIF, AVIF or SVG file with `alt` text of 1 to
 300 characters for someone who cannot see it, and a file name of its own (the
@@ -1461,7 +1466,7 @@ once its service is registered on the deployment.
 npx initiative-plugin dev --initiative https://initiative.example.com --api-key ppk_…
 ```
 
-`dev` packs a declarative plug-in and uploads it, with its picture, to your
+`dev` packs a declarative or tool plug-in and uploads it, with its picture, to your
 deployment, then again a moment after each change in the directory holding
 `src/plugin.ts`. The key may be given as `INITIATIVE_API_KEY` instead. It prints
 each upload and the deployment's answer:
