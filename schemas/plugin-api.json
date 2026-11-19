@@ -5,7 +5,7 @@
     "version": "11.0.0",
     "x-initiative-source": {
       "version": "0.79.2",
-      "commit": "1bc0ecd714b3a152ced48061a97ca9c9a9836204"
+      "commit": "7aab5516434bde141f21f4d3e6f92b2fc61af60a"
     }
   },
   "servers": [
@@ -4420,7 +4420,8 @@
             "in": "query",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/CommentSubject"
+              "type": "string",
+              "title": "Subject Type"
             }
           },
           {
@@ -8997,7 +8998,7 @@
           "tags"
         ],
         "summary": "Bulk Edit Tags",
-        "description": "Add and/or remove tags across many entities of one type, atomically.\n\nEvery target is authorized with write on the tool that governs it, read\nfrom the registry its RLS policy is rendered from: a tool row asks itself,\na sub-resource (a task, a counter, a wiki page, …) asks its parent tool.\nNothing is applied unless every target passes — one transaction, and a\nparent tool's ``updated_at`` moves once for all of its sub-resources rather\nthan once per row.",
+        "description": "Add and/or remove tags across many entities of one type, atomically.\n\nEvery target is authorized with write on the tool that governs it, read\nfrom the registry its RLS policy is rendered from: a tool row asks itself,\na sub-resource (a task, a counter, a wiki page, …) asks its parent tool.\nA tool plug-in's row is read and refused by its tool's sharing, one at a\ntime. Nothing is applied unless every target passes — one transaction, and\na parent tool's ``updated_at`` moves once for all of its sub-resources\nrather than once per row.",
         "operationId": "bulk_edit_tags",
         "security": [
           {
@@ -10393,7 +10394,7 @@
                 {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/SearchEntityType"
+                    "type": "string"
                   }
                 },
                 {
@@ -11120,7 +11121,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/PropertyTarget"
+              "type": "string",
+              "title": "Target"
             }
           },
           {
@@ -11207,7 +11209,8 @@
             "in": "path",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ArchivableType"
+              "type": "string",
+              "title": "Entity Type"
             }
           },
           {
@@ -11506,28 +11509,10 @@
         "title": "ActorKind",
         "description": "Who did something to a row: what its ``created_by`` (made it) or\n``deleted_by`` (put it in the trash) names."
       },
-      "ArchivableType": {
-        "type": "string",
-        "enum": [
-          "project",
-          "file",
-          "counter_group",
-          "calendar",
-          "dashboard",
-          "post",
-          "wiki",
-          "contact",
-          "task",
-          "collection",
-          "initiative"
-        ],
-        "title": "ArchivableType",
-        "description": "Things that can be archived."
-      },
       "ArchiveResponse": {
         "properties": {
           "entity_type": {
-            "$ref": "#/components/schemas/ArchivableType",
+            "type": "string",
             "title": "Entity Type"
           },
           "entity_id": {
@@ -14029,7 +14014,7 @@
             "description": "A person is mentioned as `@[](<reference>)`, by your reference for them, with no name: read who they are from the members search (`members:read`). Write a mention the same way. A stored file comes without its path: `![alt]()`, `[name]()`."
           },
           "subject_type": {
-            "$ref": "#/components/schemas/CommentSubject",
+            "type": "string",
             "title": "Subject Type"
           },
           "subject_id": {
@@ -14143,7 +14128,7 @@
             "title": "Id"
           },
           "subject_type": {
-            "$ref": "#/components/schemas/CommentSubject",
+            "type": "string",
             "title": "Subject Type"
           },
           "subject_id": {
@@ -14283,23 +14268,6 @@
         ],
         "title": "CommentRemoval",
         "description": "What a tombstone says in place of a comment: who took it out, and,\nfor a moderator, why. Never what it said, or who wrote it."
-      },
-      "CommentSubject": {
-        "type": "string",
-        "enum": [
-          "task",
-          "wiki_page",
-          "collection",
-          "project",
-          "file",
-          "counter_group",
-          "calendar",
-          "dashboard",
-          "post",
-          "wiki",
-          "contact"
-        ],
-        "title": "CommentSubject"
       },
       "ContactAddress": {
         "properties": {
@@ -20107,26 +20075,6 @@
         "title": "PropertySummary",
         "description": "Lightweight property value for embedding in entity reads.\n\n``value`` is rehydrated from the correct typed column by the service\nlayer. For ``user_reference`` properties the service attaches a\nminimal person dict (``id``, the handle, ``display_name``, ``avatar_url``)."
       },
-      "PropertyTarget": {
-        "type": "string",
-        "enum": [
-          "project",
-          "file",
-          "counter_group",
-          "calendar",
-          "dashboard",
-          "post",
-          "wiki",
-          "contact",
-          "task",
-          "calendar_event",
-          "counter",
-          "wiki_page",
-          "collection"
-        ],
-        "title": "PropertyTarget",
-        "description": "What can carry custom property values: every tool and sub-tool."
-      },
       "PropertyValueInput": {
         "properties": {
           "property_id": {
@@ -20327,31 +20275,10 @@
         "title": "ResourceGrantSchema",
         "description": "One ``resource_grants`` row — exactly the columns that define a grant: a\n``level`` for a user (``user_id``), an initiative role (``role_id``), all\ninitiative members (``all_initiative_members``), or an installed plug-in\n(``plugin_install_id``). Exactly one grantee is set.\n\nThe identical shape both reports a resource's grants (``grants`` is a list of\nthese) and replaces them (the ``PUT /{id}/grants`` body) — no field is\nread-only or write-only. The server always preserves the resource's owner\ngrant. Role display names are resolved client-side from the initiative's roles\nby ``role_id``.\n\nA **plug-in install** grantee is reported here and not taken from here: kept by\nthe server whatever this list says. What a plug-in may reach is the seat's to\ndecide, not a resource owner's sharing panel."
       },
-      "SearchEntityType": {
-        "type": "string",
-        "enum": [
-          "calendar",
-          "calendar_event",
-          "collection",
-          "comment",
-          "contact",
-          "counter",
-          "counter_group",
-          "dashboard",
-          "file",
-          "post",
-          "project",
-          "tag",
-          "task",
-          "wiki",
-          "wiki_page"
-        ],
-        "title": "SearchEntityType"
-      },
       "SearchSuggestion": {
         "properties": {
           "entity_type": {
-            "$ref": "#/components/schemas/SearchEntityType",
+            "type": "string",
             "title": "Entity Type"
           },
           "entity_id": {
@@ -20378,7 +20305,7 @@
           "tool": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Tool"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -20462,7 +20389,8 @@
       "TagBulkEditRequest": {
         "properties": {
           "target_type": {
-            "$ref": "#/components/schemas/TagTarget"
+            "type": "string",
+            "title": "Target Type"
           },
           "target_ids": {
             "items": {
@@ -20496,7 +20424,7 @@
           "target_ids"
         ],
         "title": "TagBulkEditRequest",
-        "description": "Add and/or remove tags across many entities of one type, atomically."
+        "description": "Add and/or remove tags across many entities of one type, atomically.\n``target_type`` is a taggable kind the community has: a tool, a built-in\ntool's taggable item (``app.core.tools.TAG_TARGETS``), or a kind of an\ninstalled tool plug-in."
       },
       "TagBulkEditResponse": {
         "properties": {
@@ -20579,25 +20507,6 @@
         ],
         "title": "TagSummary",
         "description": "Lightweight tag representation for embedding in other schemas."
-      },
-      "TagTarget": {
-        "type": "string",
-        "enum": [
-          "project",
-          "file",
-          "counter_group",
-          "calendar",
-          "dashboard",
-          "post",
-          "wiki",
-          "contact",
-          "task",
-          "calendar_event",
-          "wiki_page",
-          "collection"
-        ],
-        "title": "TagTarget",
-        "description": "Entity types a bulk tag edit can address."
       },
       "TaskCreate": {
         "properties": {
