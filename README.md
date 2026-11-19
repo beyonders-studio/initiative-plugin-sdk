@@ -1429,7 +1429,8 @@ connections, endpoints, widgets, pages, fields, parts, actions, settings or
 permissions. Only a tool plug-in carries a `tool`.
 
 - **Keys.** The tool's key, each item's and each field's are a lower-case
-  letter, then lower-case letters, digits and `_`, at most 40 characters.
+  letter, then lower-case letters, digits and `_`, at most 17 characters, so
+  a kind (the key, `.`, the plug-in's uid) fits Initiative's kind columns.
   Initiative names the tables and columns after them. Two plug-ins may declare
   the same tool key: Initiative tells them apart by the plug-in.
 - **Columns every row has.** `id`, `initiative_id`, `name`, `position`,
