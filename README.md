@@ -1323,7 +1323,7 @@ the tool works as a built-in tool does and is offered in every initiative. It
 is shared, trashed, archived, commented on, tagged, linked, searched and
 exported like every other tool, and has a switch and a create permission in
 each initiative, none of which it declares. What it does declare is what each
-of its tables draws: a list and an item page for each, in the layout format
+of its tables draws: its lists and an item page for each, in the layout format
 Initiative draws its own tools in. They are the tool's starting layouts, which
 each community then changes in the layout editor.
 
@@ -1345,13 +1345,20 @@ export default definePlugin({
     icon: "gauge",
     fields: [{ key: "description", name: { en: "Description" }, kind: "text" }],
     layouts: {
-      list: {
-        kind: "grid",
-        card: {
-          type: "card",
-          children: [field("name"), { type: "stack", props: { tone: "muted" }, children: [field("description")] }],
+      lists: [
+        {
+          kind: "grid",
+          card: {
+            type: "card",
+            children: [
+              { type: "items", props: { item: "counter", fields: ["name", "count"], limit: 4, tint: "color" } },
+              field("name"),
+              { type: "stack", props: { tone: "muted" }, children: [field("description")] },
+            ],
+          },
         },
-      },
+        { kind: "table", columns: ["name", "description", "updated_at"] },
+      ],
       detail: {
         header: [{ type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] }],
         main: [field("description"), { type: "relations" }],
@@ -1371,27 +1378,39 @@ export default definePlugin({
           },
           { key: "min", name: { en: "Minimum" }, kind: "number" },
           { key: "max", name: { en: "Maximum" }, kind: "number" },
-          { key: "step", name: { en: "Step" }, kind: "number", default: 1 },
-          { key: "initial_count", name: { en: "Starting count" }, kind: "number", default: 0 },
-          { key: "color", name: { en: "Colour" }, kind: "color" },
+          { key: "step", name: { en: "Step" }, kind: "number", default: 1, required: true },
+          { key: "initial_count", name: { en: "Starting count" }, kind: "number", default: 0, required: true },
+          { key: "color", name: { en: "Colour" }, kind: "color", default: "random" },
           {
             key: "view_mode",
             name: { en: "Look" },
             kind: "select",
             default: "number",
+            required: true,
             options: [
               { value: "number", label: { en: "Number" } },
-              { value: "progress_bar", label: { en: "Progress bar" } },
-              { value: "segmented_clock", label: { en: "Segmented clock" } },
+              { value: "bar", label: { en: "Progress bar" } },
+              { value: "clock", label: { en: "Segmented clock" } },
             ],
           },
         ],
+        checks: [
+          { field: "min", at_most: { field: "max" } },
+          { field: "step", above: 0 },
+        ],
         layouts: {
-          list: {
-            kind: "grid",
-            card: { type: "card", children: [field("name"), field("count")] },
-            displays: { count: "bar" },
-          },
+          lists: [
+            {
+              kind: "grid",
+              card: { type: "card", props: { tint: "color" }, children: [field("name"), field("count")] },
+              displays: { count: { from: "view_mode" } },
+              presets: [
+                { slug: "by-name", name: { en: "By name" }, sort: [{ field: "name" }] },
+                { slug: "by-count", name: { en: "By count" }, sort: [{ field: "count", dir: "desc" }, { field: "name" }] },
+              ],
+            },
+            { kind: "table", columns: ["name", "count", "min", "max"], displays: { count: { from: "view_mode" } } },
+          ],
           detail: {
             header: [
               { type: "stack", props: { direction: "row", gap: "sm", align: "start" }, children: [field("name"), { type: "actions" }] },
@@ -1447,32 +1466,73 @@ permissions. Only a tool plug-in carries a `tool`.
   select or multi_select field has `options`, each value once; a currency field
   names its `currency`; only a counter field has a `counter`. A `default` is a
   value of the field's kind: an option's value for a select, a list of them for
-  a multi_select, `#rrggbb` for a colour. A counter starts at its `initial`, and
-  a person is never a default.
+  a multi_select, `#rrggbb` for a colour, or `random` for a colour Initiative
+  picks from its palette for each new row. A counter starts at its `initial`,
+  and a person is never a default.
+- **`required: true`** makes a field's column NOT NULL. A required field has a
+  `default`, which a row added without the field takes, and which every row
+  already there takes when a version adds the field or makes it required, so
+  the rule never depends on what an earlier version declared. A counter's
+  default is its `initial`, so it needs none; a person is never a default, so
+  a `user_reference` field is never required. Counters requires its step, its
+  starting count and its look.
 - **A counter's `min`, `max`, `step` and `initial`** are each a number, or the
   key of a number field of the same table, so each row holds its own bounds. A
   number step is above 0.
+- **`checks`** on the tool or an item: at most 8 rules every row of the table
+  holds to, in `open_while`'s comparisons. Each names a number or counter field
+  of the table and one of `below`, `at_most`, `above`, `at_least`, `equals` or
+  `not_equals`, against a number or `{ field }`, another such field of the
+  table. Initiative makes each a CHECK, so a row where either side is empty
+  passes and a change that breaks one is refused. Where both sides have a
+  default, the defaults a new row starts with hold to it. Counters checks `{ field: "min", at_most:
+  { field: "max" } }` and `{ field: "step", above: 0 }`.
 - **Items.** At most 4 item tables. An item sits under the tool's rows, or,
   with `parent`, under another item that sits under them: two levels at most.
   An item is deleted with the row it sits under.
-- **Layouts.** The tool and each item declare `layouts`: a `list`, how a group
-  of their rows is listed, and a `detail`, how one is shown on its own page.
-  Counters lists its counter groups as cards, each its name over its
-  description; it lists a group's counters as cards too, each its name and its
-  count drawn as a bar; and a counter's page puts its name and its menu across
-  the top, its count and what it links to in the middle, and how it counts
-  beside them. Each is a tree of parts naming the table's fields:
+- **Layouts.** The tool and each item declare `layouts`: `lists`, the ways a
+  group of their rows is listed, and a `detail`, how one is shown on its own
+  page. Counters lists its counter groups as cards, each previewing its first
+  four counters in their colours above its name and description, or as a
+  table; it lists a group's counters as cards tinted by their colour, each its
+  name and its count drawn in the counter's own look, or as a table; and a
+  counter's page puts its name and its menu across the top, its count and what
+  it links to in the middle, and how it counts beside them. Each is a tree of
+  parts naming the table's fields:
   - A field is one the table declares, by its key, or one every row has
     (`TOOL_LAYOUT_FIELDS`): `name`, `created_by`, `created_at`, `updated_at` and
     `tags`. A layout never names another table's field.
-  - A list's `kind` is `grid`, a card per row drawn as its `card` says, or
-    `table`, a column per field in `columns`. A card holds `field`, `stack` (with
-    `direction`, `gap`, `wrap`, `align` and `tone`), `properties` (the
-    initiative's own properties for the row) and further `card` parts.
+  - `lists` holds one to three lists, each of a different `kind`. Each person
+    picks the one they see, and the first is the one they start on. A `grid`
+    is a card per row and a `masonry` wall the same cards at their own heights,
+    each drawn as its `card` says; a `table` is a column per field in `columns`.
+    A card holds `field`, `stack` (with `direction`, `gap`, `wrap`, `align` and
+    `tone`), `properties` (the initiative's own properties for the row),
+    `items` and further `card` parts. Initiative's other lists (a board, a
+    Gantt chart, a calendar, a timeline) are drawn by a status or dates a
+    declaration does not name, so a tool does not list itself in them.
+  - A card's `props.tint` names a `color` field of the table, which the card is
+    drawn in. A row with no colour draws plain.
+  - An `items` part shows the row's first items of an item table directly under
+    it, in their own order: `item` names the table, `fields` at most 4 of its
+    fields, each once, drawn as that table's first list draws them, `limit` how
+    many, from 1 to 8, and `tint` one of its `color` fields.
   - `displays` draws a scale or counter field in a look, by its key: a scale as
     a `number`, `stars` or a `bar`, a counter as a `number`, a `bar` or a `clock`.
+    `{ from: "<select field>" }` takes the look from a select field of the row,
+    so each row keeps its own, and every option of that field is a look the
+    drawn field has: Counters' `view_mode` offers `number`, `bar` and `clock`.
     A bar and a clock need the counter's bounds, so a row missing one draws a
     number.
+  - `presets` are at most 20 named sorts a person picks a list in. Each has a
+    `slug` (lower-case letters and digits, words joined by single `-`, at most
+    64 characters, unique in its list), a `name` in each language, and `sort`,
+    at most 4 `{ field, dir }`, first to last, each field once. A preset sorts
+    by a `number`, `counter`, `currency`, `scale`, `date`, `datetime` or
+    `checkbox` field the table declares, or by `name`, `created_at` or
+    `updated_at` (`TOOL_SORT_FIELDS`); `dir` is `asc` (the default) or `desc`.
+    Picking one sorts what the person sees; the rows' own order, which people
+    drag, stays as it is.
   - A detail has three regions, `header`, `main` and `side`, each a list of
     parts: `field`, `stack`, `section` (with a `title` drawn as written, and
     `collapsed`), `properties`, and the parts every tool's page has

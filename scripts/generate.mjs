@@ -83,6 +83,8 @@ function pattern(name, form, prefix = "") {
   if (form === "path") return `${lead}(?!.*(?://|\\.\\.))/${cls}*$`;
   // A lowercase letter first, then anything the set holds.
   if (form === "letterFirst") return `${lead}[a-z]${cls}*$`;
+  // Words of the set joined by single '-': no '-' first, last or twice.
+  if (form === "hyphenated") return `${lead}${cls}+(?:-${cls}+)*$`;
   throw new Error(`unknown pattern form '${form}'`);
 }
 

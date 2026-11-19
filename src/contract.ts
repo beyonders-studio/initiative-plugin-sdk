@@ -90,14 +90,20 @@ export const TOOL_COLUMNS: readonly ToolColumn[] = ["id", "initiative_id", "name
 export type ToolLayoutField = "name" | "created_by" | "created_at" | "updated_at" | "tags";
 export const TOOL_LAYOUT_FIELDS: readonly ToolLayoutField[] = ["name", "created_by", "created_at", "updated_at", "tags"];
 
-export type ToolListKind = "grid" | "table";
-export const TOOL_LIST_KINDS: readonly ToolListKind[] = ["grid", "table"];
+export type ToolSortField = "name" | "created_at" | "updated_at";
+export const TOOL_SORT_FIELDS: readonly ToolSortField[] = ["name", "created_at", "updated_at"];
+
+export type ToolListKind = "grid" | "masonry" | "table";
+export const TOOL_LIST_KINDS: readonly ToolListKind[] = ["grid", "masonry", "table"];
 
 export type ToolDetailPart = "byline" | "notice" | "actions" | "relations" | "comments";
 export const TOOL_DETAIL_PARTS: readonly ToolDetailPart[] = ["byline", "notice", "actions", "relations", "comments"];
 
 export type FieldDisplay = "number" | "stars" | "bar" | "clock";
 export const FIELD_DISPLAYS: readonly FieldDisplay[] = ["number", "stars", "bar", "clock"];
+
+export type SortDir = "asc" | "desc";
+export const SORT_DIRS: readonly SortDir[] = ["asc", "desc"];
 
 export type Tone = "accent" | "positive" | "negative" | "warning" | "neutral" | "muted";
 export const TONES: readonly Tone[] = ["accent", "positive", "negative", "warning", "neutral", "muted"];
@@ -154,6 +160,7 @@ export const CAPS = {
   toolFields: 32,
   toolItems: 4,
   toolActions: 16,
+  toolChecks: 8,
   permissions: 16,
   partNodes: 50,
   partDepth: 4,
@@ -181,6 +188,11 @@ export const CAPS = {
   layoutDepth: 6,
   layoutBytes: 65536,
   layoutTitleLength: 100,
+  layoutPresets: 20,
+  presetSorts: 4,
+  slugLength: 64,
+  previewItems: 8,
+  previewFields: 4,
   publicIdLength: 120,
   pathLength: 200,
   endpointIdLength: 200,
@@ -247,6 +259,7 @@ export const CHARSETS = {
   metadataKey: "._0123456789abcdefghijklmnopqrstuvwxyz",
   uniqueSettingValue: "0123456789abcdefghijklmnopqrstuvwxyz",
   toolKey: "_0123456789abcdefghijklmnopqrstuvwxyz",
+  slug: "0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
 
 /**
@@ -291,23 +304,30 @@ export const FIELDS = {
   buttonNode: ["type", "props"],
   part: ["id", "name", "on", "tree", "description", "permission", "requires"],
   action: ["id", "name", "endpoint", "params", "write", "on", "confirm", "menu", "permission", "requires"],
-  tool: ["key", "name", "instance_name", "icon", "fields", "layouts", "items", "actions"],
-  toolField: ["key", "name", "kind", "currency", "options", "default", "counter"],
+  tool: ["key", "name", "instance_name", "icon", "fields", "checks", "layouts", "items", "actions"],
+  toolField: ["key", "name", "kind", "currency", "options", "default", "required", "counter"],
   toolCounter: ["min", "max", "step", "initial"],
-  toolItem: ["key", "name", "parent", "fields", "layouts", "open_while"],
+  toolItem: ["key", "name", "parent", "fields", "checks", "layouts", "open_while"],
   toolOpenWhile: ["field", "below", "at_most", "above", "at_least", "equals", "not_equals", "is", "in", "not_passed"],
+  toolCheck: ["field", "below", "at_most", "above", "at_least", "equals", "not_equals"],
   toolAction: ["id", "name", "on", "params", "write", "confirm"],
   toolChange: ["set", "items"],
   toolItemChange: ["id", "set"],
-  toolLayouts: ["list", "detail"],
-  toolListLayout: ["kind", "card", "columns", "displays"],
+  toolLayouts: ["lists", "detail"],
+  toolListLayout: ["kind", "card", "columns", "displays", "presets"],
+  toolDisplayFrom: ["from"],
+  layoutPreset: ["slug", "name", "sort"],
+  layoutPresetSort: ["field", "dir"],
   toolDetailLayout: ["header", "main", "side"],
-  layoutCard: ["type", "children"],
+  layoutCard: ["type", "props", "children"],
+  layoutCardProps: ["tint"],
   layoutCardStack: ["type", "props", "children"],
   layoutStackProps: ["direction", "gap", "wrap", "align", "tone"],
   layoutCardField: ["type", "props"],
   layoutFieldProps: ["field"],
   layoutProperties: ["type"],
+  layoutItems: ["type", "props"],
+  layoutItemsProps: ["item", "fields", "limit", "tint"],
   layoutDetailStack: ["type", "props", "children"],
   layoutSection: ["type", "props", "children"],
   layoutSectionProps: ["title", "collapsed"],
@@ -1522,12 +1542,12 @@ export interface Action {
  * (sharing, trash, archive, holds, comments, tags, links, search, export, its
  * switch and its create permission) hold for it without being declared. So a
  * tool declares only what is its own: its key, names and icon, the fields of
- * its own rows and of each item table, which item tables sit under which, which
- * items stay open, what each table draws, and its actions. What a table draws
- * is its 'layouts', in the layout format Initiative's own tools are drawn in:
- * they are the tool's starting layouts, which each community then changes in
- * its layout editor. Every row holds the universal columns ('toolColumn')
- * beside the fields it declares.
+ * its own rows and of each item table, what their rows hold to, which item
+ * tables sit under which, which items stay open, what each table draws, and its
+ * actions. What a table draws is its 'layouts', in the layout format
+ * Initiative's own tools are drawn in: they are the tool's starting layouts,
+ * which each community then changes in its layout editor. Every row holds the
+ * universal columns ('toolColumn') beside the fields it declares.
  */
 export interface Tool {
   /**
@@ -1554,6 +1574,11 @@ export interface Tool {
    * Absent: its rows hold the universal columns alone.
    */
   fields?: ToolField[];
+  /**
+   * What every row of the table holds to, at most 8. Initiative refuses a
+   * change that breaks one.
+   */
+  checks?: ToolCheck[];
   /**
    * How the tool's own rows are listed, and how one of them is shown.
    */
@@ -1617,12 +1642,21 @@ export interface ToolField {
   options?: FieldOption[];
   /**
    * The value a new row starts with, of the field's kind: a string for text,
-   * url, date, datetime and color; a number for number, currency and scale; a
-   * boolean for checkbox; an option's value for select; a list of them for
-   * multi_select. A counter starts at its 'initial', and a person is never a
-   * default. Absent: no value.
+   * url, date and datetime; '#rrggbb' or 'random' for color, 'random' being a
+   * colour Initiative picks from its palette for each new row; a number for
+   * number, currency and scale; a boolean for checkbox; an option's value for
+   * select; a list of them for multi_select. A counter starts at its 'initial',
+   * and a person is never a default. Absent: no value.
    */
   default?: unknown;
+  /**
+   * The field is never empty: its column is NOT NULL. A required field has a
+   * 'default', which a row added without the field takes, and which every row
+   * already there takes when a version adds the field or makes it required. A
+   * counter's default is its 'initial', so it needs none, and a person is never
+   * a default, so a user_reference field is never required. Absent: false.
+   */
+  required?: boolean;
   counter?: ToolCounter;
 }
 
@@ -1681,6 +1715,11 @@ export interface ToolItem {
    */
   fields: ToolField[];
   /**
+   * What every row of the table holds to, at most 8. Initiative refuses a
+   * change that breaks one.
+   */
+  checks?: ToolCheck[];
+  /**
    * How the item is listed under the row it sits under, and how one is shown.
    */
   layouts: ToolLayouts;
@@ -1722,8 +1761,29 @@ export interface ToolOpenWhile {
 }
 
 /**
+ * One thing every row of a table holds to, in 'open_while''s comparison
+ * grammar: a number or counter field of the table, and exactly one comparison
+ * of it with a number or another such field ('below', 'at_most', 'above',
+ * 'at_least', 'equals', 'not_equals'). Initiative makes it a CHECK on the
+ * table, so a row where either side is empty passes. For example, {"field":
+ * "min", "at_most": {"field": "max"}} and {"field": "step", "above": 0}.
+ */
+export interface ToolCheck {
+  /**
+   * The table's field the check reads.
+   */
+  field: ToolKey;
+  below?: ToolOperand;
+  at_most?: ToolOperand;
+  above?: ToolOperand;
+  at_least?: ToolOperand;
+  equals?: ToolOperand;
+  not_equals?: ToolOperand;
+}
+
+/**
  * What a number or counter field is compared with: a number, or {"field": key},
- * another number or counter field of the same item.
+ * another number or counter field of the same table.
  */
 export type ToolOperand = number | {
   field: ToolKey;
@@ -1795,26 +1855,31 @@ export interface ToolItemChange {
 }
 
 /**
- * What one of a tool's tables draws: how its rows are listed, and how one of
- * them is shown on its own page. Both are written in the layout format
+ * What one of a tool's tables draws: the lists its rows are listed in, and how
+ * one of them is shown on its own page. Both are written in the layout format
  * Initiative stores and draws for its own tools, naming the table's fields. On
  * install they become the community's layouts for the table, which its people
  * change in the layout editor as they change any tool's.
  */
 export interface ToolLayouts {
-  list: ToolListLayout;
+  /**
+   * The ways its rows are listed, each of a different kind. Each person picks
+   * one, and the first is the one a person starts on.
+   */
+  lists: ToolListLayout[];
   detail: ToolDetailLayout;
 }
 
 /**
- * How a table's rows are listed: as a 'grid' of cards, each drawn as its 'card'
- * says, or as a 'table', a column per field in 'columns'. At most 300 parts and
- * columns together, nested at most 6 deep.
+ * One way a table's rows are listed: as a 'grid' of cards or a 'masonry' wall
+ * of them, each drawn as its 'card' says, or as a 'table', a column per field
+ * in 'columns'. At most 300 parts and columns together, nested at most 6 deep.
  */
 export interface ToolListLayout {
   kind: ToolListKind;
   /**
-   * What a grid's card shows of a row. A grid's only, and required on one.
+   * What a grid's or a masonry wall's card shows of a row. Theirs only, and
+   * required on one.
    */
   card?: LayoutCard;
   /**
@@ -1824,11 +1889,64 @@ export interface ToolListLayout {
   /**
    * How a scale or counter field the list shows is drawn, by its key: a scale
    * as a 'number', 'stars' or a 'bar'; a counter as a 'number', a 'bar' or a
-   * 'clock'. A bar and a clock need the counter's 'min' and 'max', and a row
-   * missing one draws a number. Absent: a number.
+   * 'clock'; or, as {"from": key}, in the look a select field of the row names,
+   * so each row keeps its own. A bar and a clock need the counter's 'min' and
+   * 'max', and a row missing one draws a number. Absent: a number.
    */
-  displays?: Record<string, FieldDisplay>;
+  displays?: Record<string, FieldDisplay | ToolDisplayFrom>;
+  /**
+   * Sorts a person can pick the list in, at most 20, each slug at most once.
+   * Picking one sorts what the person sees; the rows' own order, which people
+   * drag, stays as it is.
+   */
+  presets?: LayoutPreset[];
 }
+
+/**
+ * A look read from the row: the key of a select field of the same table, each
+ * of whose options' values is a look the drawn field's kind has.
+ */
+export interface ToolDisplayFrom {
+  from: ToolKey;
+}
+
+/**
+ * A named sort a list offers.
+ */
+export interface LayoutPreset {
+  /**
+   * What a link to the preset carries.
+   */
+  slug: LayoutSlug;
+  /**
+   * The preset's name, in each reader's language.
+   */
+  name: LocalizedText;
+  /**
+   * What the list is sorted by, first to last, at most 4, each field at most
+   * once.
+   */
+  sort: LayoutPresetSort[];
+}
+
+export interface LayoutPresetSort {
+  /**
+   * A field of the table: a number, counter, currency, scale, date, datetime or
+   * checkbox field it declares, or one every row has that sorts
+   * ('toolSortField'): 'name', 'created_at' or 'updated_at'.
+   */
+  field: ToolKey;
+  /**
+   * 'asc', lowest first, or 'desc'. Absent: 'asc'.
+   */
+  dir?: SortDir;
+}
+
+/**
+ * Lower-case letters and digits, words joined by single '-', at most 64
+ * characters: 'by-count'.
+ */
+export type LayoutSlug = string;
 
 /**
  * How one row is shown on its own page, in three regions, each its parts in
@@ -1847,13 +1965,22 @@ export interface ToolDetailLayout {
  */
 export interface LayoutCard {
   type: "card";
+  props?: LayoutCardProps;
   children?: LayoutCardPart[];
+}
+
+export interface LayoutCardProps {
+  /**
+   * A color field of the table, which the card is drawn in. A row with no
+   * colour draws plain.
+   */
+  tint?: ToolKey;
 }
 
 /**
  * One part of a card, told apart by 'type'.
  */
-export type LayoutCardPart = LayoutCard | LayoutCardStack | LayoutCardField | LayoutProperties;
+export type LayoutCardPart = LayoutCard | LayoutCardStack | LayoutCardField | LayoutProperties | LayoutItems;
 
 /**
  * A card's parts side by side or one above another.
@@ -1909,6 +2036,36 @@ export interface LayoutFieldProps {
  */
 export interface LayoutProperties {
   type: "properties";
+}
+
+/**
+ * The row's first items of one item table, in their own order, each drawn small
+ * with the fields 'fields' names.
+ */
+export interface LayoutItems {
+  type: "items";
+  props: LayoutItemsProps;
+}
+
+export interface LayoutItemsProps {
+  /**
+   * The key of an item table directly under the table the card is for.
+   */
+  item: ToolKey;
+  /**
+   * The item's fields each shows, in order, at most 4, each at most once: ones
+   * it declares, or ones every row has ('toolLayoutField'). Each is drawn as
+   * the item table's first list draws it.
+   */
+  fields: ToolKey[];
+  /**
+   * How many it shows at most, up to 8.
+   */
+  limit: number;
+  /**
+   * A color field of the item table, which each is drawn in.
+   */
+  tint?: ToolKey;
 }
 
 /**
@@ -2619,9 +2776,11 @@ export interface WebhookStatus {
  * keys and ids of fields, parts, actions and settings, the unique values of a
  * field's options, what a part's nodes, a field's element actions and an
  * action's endpoint and params name, the placeholders in a part's text, a
- * part's size and depth, and the fields a tool's layouts name, the looks they
- * draw them in and their size and depth are enforced by the platform on publish
- * and are not expressible here.
+ * part's size and depth, what a tool's checks and required fields hold, the
+ * fields a tool's layouts name, the looks they draw them in, the item tables
+ * they preview, the fields they tint and sort by, the kinds of a table's lists,
+ * the slugs of their presets, and their size and depth are enforced by the
+ * platform on publish and are not expressible here.
  */
 export interface Manifest {
   /**
