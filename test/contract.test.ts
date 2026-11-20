@@ -117,7 +117,6 @@ describe("the schema draws its vocabulary from the contract", () => {
     const tools = [
       "projects",
       "files",
-      "counter_groups",
       "calendars",
       "dashboards",
       "posts",
