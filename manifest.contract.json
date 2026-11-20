@@ -165,7 +165,6 @@
     "itemKind": [
       "task",
       "calendar_event",
-      "counter",
       "post"
     ],
     "fieldKind": [
