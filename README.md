@@ -488,7 +488,7 @@ it is the deployment's decision.
 ### Fields, parts and actions
 
 What a plug-in adds to the views and pages of Initiative's items: tasks,
-calendar events, counters and posts
+calendar events and posts
 (`ITEM_KINDS`). Initiative draws all of it with its own components, so no
 plug-in code runs in a reader's browser, and the community's managers place
 it; a plug-in never places itself. Any plug-in may declare them, container or

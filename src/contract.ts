@@ -72,8 +72,8 @@ export const SURFACE_SCOPES: readonly SurfaceScope[] = ["community", "initiative
 export type PageCapability = "camera" | "clipboard-read" | "clipboard-write" | "display-capture" | "fullscreen" | "geolocation" | "microphone";
 export const PAGE_CAPABILITIES: readonly PageCapability[] = ["camera", "clipboard-read", "clipboard-write", "display-capture", "fullscreen", "geolocation", "microphone"];
 
-export type ItemKind = "task" | "calendar_event" | "counter" | "post";
-export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "counter", "post"];
+export type ItemKind = "task" | "calendar_event" | "post";
+export const ITEM_KINDS: readonly ItemKind[] = ["task", "calendar_event", "post"];
 
 export type FieldKind = "text" | "number" | "date" | "datetime" | "link" | "badge" | "scale" | "checkbox" | "url" | "currency" | "select" | "multi_select" | "user_reference";
 export const FIELD_KINDS: readonly FieldKind[] = ["text", "number", "date", "datetime", "link", "badge", "scale", "checkbox", "url", "currency", "select", "multi_select", "user_reference"];
