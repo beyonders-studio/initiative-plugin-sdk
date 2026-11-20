@@ -1718,7 +1718,6 @@ either the file's version or the client is stale.
 |---|---|
 | `projects:read`, `projects:write` | Projects and what belongs to them: tasks, statuses, task types, checklists. |
 | `files:read`, `files:write` | Files: text documents, whiteboards, spreadsheets, links and uploads, and the collections they are in. |
-| `counter_groups:read`, `counter_groups:write` | Counter groups, their counters and commands. |
 | `calendars:read`, `calendars:write` | Calendars, events and attendees. |
 | `dashboards:read`, `dashboards:write` | Dashboards. |
 | `posts:read`, `posts:write` | Posts, including pinning. |

@@ -36,7 +36,7 @@
         },
         "scopes": {
           "type": "array",
-          "maxItems": 54,
+          "maxItems": 52,
           "uniqueItems": true,
           "items": {
             "anyOf": [
@@ -46,8 +46,6 @@
                   "projects:write",
                   "files:read",
                   "files:write",
-                  "counter_groups:read",
-                  "counter_groups:write",
                   "calendars:read",
                   "calendars:write",
                   "dashboards:read",
@@ -162,7 +160,7 @@
     },
     "scopes": {
       "type": "array",
-      "maxItems": 54,
+      "maxItems": 52,
       "uniqueItems": true,
       "items": {
         "anyOf": [
@@ -172,8 +170,6 @@
               "projects:write",
               "files:read",
               "files:write",
-              "counter_groups:read",
-              "counter_groups:write",
               "calendars:read",
               "calendars:write",
               "dashboards:read",
