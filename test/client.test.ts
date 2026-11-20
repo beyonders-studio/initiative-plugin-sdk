@@ -288,6 +288,14 @@ describe("the plug-in API", () => {
     expect(routes()).toHaveLength(1);
   });
 
+  it("counts a tool plug-in's scope toward a scope Initiative checks per item", async () => {
+    scope = "counter_group.tsjvtcm0s7gv2x:read";
+    answers.set("POST /api/v1/c/0/webhooks/subscriptions", () => json(201, { id: 1 }));
+    const body = { target_url: "https://acme.example.com/hook", event_types: ["counter.tsjvtcm0s7gv2x.updated"] };
+    await initiative().asInstallation("gapp_1").api.createSubscription({ body });
+    expect(routes()).toEqual(["POST /c/0/webhooks/subscriptions"]);
+  });
+
   it("checks the scope of the tool a tool plug-in's kind is or sits in", async () => {
     scope = "counter_group.tsjvtcm0s7gv2x:write";
     answers.set("GET /api/v1/c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x/", () => json(200, { items: [] }));
@@ -312,6 +320,39 @@ describe("the plug-in API", () => {
     expect(write).toBeInstanceOf(MissingScopeError);
     expect(write.scope).toBe("counter_group.tsjvtcm0s7gv2x:write");
     expect(routes()).toHaveLength(2);
+  });
+
+  it("reads a tool under its read scope and steps a row under its write scope", async () => {
+    scope = "counter_group.tsjvtcm0s7gv2x:read";
+    answers.set("GET /api/v1/c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x", () =>
+      json(200, { kind: "counter_group.tsjvtcm0s7gv2x", key: "counter_group", fields: [], items: [], actions: [] })
+    );
+    answers.set("POST /api/v1/c/0/plugin-tools/counter.tsjvtcm0s7gv2x/2/step", (request) =>
+      json(200, { id: 2, sent: JSON.parse(request.body) })
+    );
+    const reading = initiative().asInstallation("gapp_1").api;
+    const tool = await reading.readPluginTool({ path: { kind: "counter_group.tsjvtcm0s7gv2x" } });
+    expect(tool.key).toBe("counter_group");
+
+    const refused = await reading
+      .stepPluginToolRow({ path: { kind: "counter.tsjvtcm0s7gv2x", row_id: 2 }, body: { field: "count" } })
+      .catch((caught) => caught);
+    expect(refused).toBeInstanceOf(MissingScopeError);
+    expect(refused.scope).toBe("counter_group.tsjvtcm0s7gv2x:write");
+    const unheld = await reading.readPluginTool({ path: { kind: "deck.a7m2qx8n4tvb9c" } }).catch((caught) => caught);
+    expect(unheld).toBeInstanceOf(MissingScopeError);
+    expect(unheld.scope).toBe("<tool key>.a7m2qx8n4tvb9c:read");
+    expect(routes()).toEqual(["GET /c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x"]);
+
+    scope = "counter_group.tsjvtcm0s7gv2x:write";
+    const stepped = await initiative()
+      .asInstallation("gapp_1")
+      .api.stepPluginToolRow({ path: { kind: "counter.tsjvtcm0s7gv2x", row_id: 2 }, body: { field: "count", by: -3 } });
+    expect(stepped).toMatchObject({ sent: { field: "count", by: -3 } });
+    expect(routes()).toEqual([
+      "GET /c/0/plugin-tools/counter_group.tsjvtcm0s7gv2x",
+      "POST /c/0/plugin-tools/counter.tsjvtcm0s7gv2x/2/step",
+    ]);
   });
 });
 

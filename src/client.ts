@@ -819,10 +819,16 @@ export class Client {
       if (tool === undefined) throw new MissingScopeError(`<tool key>.${uid}:${scope.access}`);
       needs = `${tool}:${scope.access}` as ToolScope;
     } else {
-      // Initiative checks each item; the token needs at least one of them.
+      // Initiative checks each item; the token needs at least one of them. An
+      // item may be a tool plug-in's (its events, say), which needs its tool's
+      // scope at the same access, so a held tool scope counts too.
       const held = await this.scopes();
-      const found = scope.any_of.find((one) => grants(held, one));
-      if (found === undefined) throw new MissingScopeError(scope.any_of.join(" "));
+      const access = scope.any_of[0].slice(scope.any_of[0].lastIndexOf(":"));
+      const tool = held
+        .map((one) => one.slice(0, one.lastIndexOf(":")))
+        .find((resource) => resource.includes(".") && grants(held, `${resource}${access}`));
+      const found = scope.any_of.find((one) => grants(held, one)) ?? (tool && (`${tool}${access}` as ToolScope));
+      if (!found) throw new MissingScopeError(scope.any_of.join(" "));
       needs = found;
     }
     const filled = path.replace(/\{(\w+)\}/g, (_, name: string) => {
