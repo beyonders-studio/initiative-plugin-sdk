@@ -2093,13 +2093,15 @@ describe("a tool plug-in", () => {
       { key: "name", name: { en: "Name" }, kind: "text" },
       { key: "position", name: { en: "Position" }, kind: "number" },
       { key: "counter_group_id", name: { en: "Group" }, kind: "number" },
-      { key: "description", name: { en: "Again" }, kind: "text" }
+      { key: "description", name: { en: "Again" }, kind: "text" },
+      { key: "xmin", name: { en: "Least" }, kind: "number" }
     );
     const text = messages(validateManifest(manifest));
     expect(text).toContain("/tool/fields/1/key: 'name' is a column every tool's rows have");
     expect(text).toContain("/tool/fields/2/key: 'position' is a column every tool's rows have");
     expect(text).toContain("/tool/fields/3/key: 'counter_group_id' ends in '_id', as Initiative's keys to a parent do");
     expect(text).toContain("/tool/fields/4/key: 'description' is declared twice");
+    expect(text).toContain("/tool/fields/5/key: 'xmin' is a column every tool's rows have");
   });
 
   it("holds items to unique keys, two levels deep", () => {
