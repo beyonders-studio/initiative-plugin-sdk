@@ -888,7 +888,8 @@ listingUid: plugin.uid })`, which reads billing's key from
   No call is sent unless the token holds the scope it needs: the route's own,
   the one its argument picks (`archiveEntity` on a `file` needs
   `files:write`), the scope of the tool a tool plug-in's kind names, or, where
-  Initiative checks each item, at least one of them. `MissingScopeError` names
+  Initiative checks each item, at least one of them, a tool plug-in's scope
+  among them. `MissingScopeError` names
   the scope instead. Writing implies reading.
 
   A tool plug-in's tool ([Declaring a tool](#declaring-a-tool)) is served by
@@ -900,11 +901,13 @@ listingUid: plugin.uid })`, which reads billing's key from
 
   | Method | Route | Does | Needs |
   |---|---|---|---|
+  | `readPluginTool` | `GET /plugin-tools/{kind}` | The tool as it declares it, by its kind or an item's: its names, the fields of its rows and of each item with their kinds and options, which item sits under which, and its actions with the fields they ask for. | `<tool kind>:read` |
   | `listPluginToolRows` | `GET /plugin-tools/{kind}/` | A page of the tool's rows in an initiative (`initiative_id`), or of an item's under the row it sits in (`parent_id`). | `<tool kind>:read` |
   | `createPluginToolRow` | `POST /plugin-tools/{kind}/` | A new row there, its `fields` by key and its `people` by reference. A field left out starts at its default. | `<tool kind>:write` |
   | `readPluginToolRow` | `GET /plugin-tools/{kind}/{row_id}` | One row. | `<tool kind>:read` |
   | `updatePluginToolRow` | `PATCH /plugin-tools/{kind}/{row_id}` | Changes what is sent. | `<tool kind>:write` |
   | `duplicatePluginToolRow` | `POST /plugin-tools/{kind}/{row_id}/duplicate` | A copy of a row with the items under it. | `<tool kind>:write` |
+  | `stepPluginToolRow` | `POST /plugin-tools/{kind}/{row_id}/step` | Moves one counter field of a row, named by its key: by `by`, signed, or by the field's own step, up or `down`, held within its bounds. Two steps landing together each count. Answers the row. | `<tool kind>:write` |
   | `runPluginToolAction` | `POST /plugin-tools/{kind}/{row_id}/actions/{action_id}` | Runs one of the tool's actions, with its `params` as `fields` and `people`. | `<tool kind>:write` |
 
   The scope is the tool's, for its items too: `counter_group.tsjvtcm0s7gv2x:read`
@@ -918,7 +921,17 @@ listingUid: plugin.uid })`, which reads billing's key from
   const kind = "counter.tsjvtcm0s7gv2x";
   const { items } = await client.api.listPluginToolRows({ path: { kind }, query: { parent_id: 9 } });
   await client.api.updatePluginToolRow({ path: { kind, row_id: items[0].id }, body: { fields: { count: 3 } } });
+  await client.api.stepPluginToolRow({ path: { kind, row_id: items[0].id }, body: { field: "count", down: true } });
   ```
+
+  A tool plug-in's rows send webhook events like any tool's, named by kind:
+  `<kind>.created`, `<kind>.updated` and `<kind>.deleted`, for the tool's
+  rows and each item's (`counter.tsjvtcm0s7gv2x.updated`). A subscription
+  (`createSubscription`) needs the tool's read scope for each,
+  `<tool kind>:read`, for its items' events too. Archiving or unarchiving a
+  row arrives as `updated`, with `archived_at` in its `changed`; moving one to
+  the trash arrives as `deleted`, and restoring it as `created`. An event
+  names what changed, never a value: read the row back for its fields.
 
   `client.api` is generated from the plug-in API contract this SDK publishes
   ([The plug-in API contract](#the-plug-in-api-contract)), so it changes as
