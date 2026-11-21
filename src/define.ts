@@ -437,9 +437,22 @@ export type ActionDeclaration<E> = Omit<Action, "id" | "endpoint" | "params" | "
 
 export interface DashboardDeclaration<E, W> extends Omit<BundledDashboard, "widgets"> {
   widgets: Array<
-    Omit<BundledDashboardWidget, "type" | "binding"> & {
+    Omit<BundledDashboardWidget, "type" | "binding" | "options"> & {
       type: keyof W & string;
-      binding: Omit<BundledDashboardWidget["binding"], "endpoint_id"> & { endpoint_id: ReadName<E> };
+      binding: { endpoint_id: ReadName<E>; params?: BundledDashboardWidget["binding"]["params"] };
+    }
+  >;
+}
+
+/**
+ * A tool plug-in's dashboard: Initiative's built-in widgets (`stat`,
+ * `progress`, `chart` and the rest), each drawing a query over the plug-in's
+ * own tables, `p_<uid in lower case>_<key>`. It runs as whoever views it.
+ */
+export interface ToolDashboardDeclaration extends Omit<BundledDashboard, "widgets"> {
+  widgets: Array<
+    Omit<BundledDashboardWidget, "binding"> & {
+      binding: { source: "query"; sql: string };
     }
   >;
 }
@@ -613,7 +626,8 @@ export interface PluginDefinition<E, W> {
    * half is `Initiative.signIn`.
    */
   signIn?: { page: string; returnPath: string };
-  dashboards?: DashboardDeclaration<E, W>[];
+  /** A service plug-in's arrange its widgets; a tool plug-in's draw queries over its tables. */
+  dashboards?: Array<DashboardDeclaration<E, W> | ToolDashboardDeclaration>;
   /** How the plug-in's metadata is shown on items, keyed by metadata key. */
   fields?: Record<string, Omit<Field, "key">>;
   /** Pieces of items' pages and views, keyed by part id. A `tree` may be written as JSX (`initiative-plugin-sdk/parts`). */
@@ -690,10 +704,11 @@ export function manifestOf(plugin: AnyPlugin, modules: Record<string, string> = 
     sign_in: plugin.signIn && { page: plugin.signIn.page, return_path: plugin.signIn.returnPath },
     dashboards: plugin.dashboards?.map((dashboard) => ({
       ...dashboard,
-      widgets: dashboard.widgets.map((widget) => ({
-        ...widget,
-        binding: { ...widget.binding, endpoint_id: id(widget.binding.endpoint_id) },
-      })),
+      widgets: dashboard.widgets.map((widget) =>
+        "endpoint_id" in widget.binding
+          ? { ...widget, binding: { ...widget.binding, endpoint_id: id(widget.binding.endpoint_id) } }
+          : widget
+      ),
     })),
     fields: listOf(plugin.fields, (key, field) => ({ key, ...field })),
     parts: listOf(plugin.parts, (key, part) => ({ id: key, ...part })),

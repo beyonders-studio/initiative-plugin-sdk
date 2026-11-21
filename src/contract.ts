@@ -182,6 +182,8 @@ export const CAPS = {
   dashboardWidgets: 50,
   dashboardGridColumns: 12,
   dashboardBindingParams: 12,
+  dashboardWidgetOptions: 12,
+  dashboardQueryLength: 20000,
   identifierLength: 64,
   toolKeyLength: 17,
   layoutNodes: 300,
@@ -340,7 +342,7 @@ export const FIELDS = {
   listElement: ["ref", "value", "url", "text", "tone", "max", "state"],
   setting: ["key", "type", "label", "description", "unique", "assigned"],
   bundledDashboard: ["uid", "public_id", "name", "description", "layout", "widgets"],
-  bundledDashboardWidget: ["id", "type", "title", "grid", "binding"],
+  bundledDashboardWidget: ["id", "type", "title", "grid", "options", "binding"],
   endpointIdentity: ["kind", "key"],
   vendorAuth: ["header", "prefix"],
   vendorRequest: ["method", "url", "query", "headers", "body", "graphql", "connection", "paging"],
@@ -2368,9 +2370,11 @@ export interface BundledDashboard {
 export interface BundledDashboardWidget {
   id?: Identifier;
   /**
-   * One of this manifest's own widget ids — bare, with no uid. The platform
-   * stamps the plug-in's uid on when it publishes, so the two can never
-   * disagree.
+   * What draws the tile. A service plug-in's names one of this manifest's own
+   * widget ids, bare, with no uid: the platform stamps the plug-in's uid on
+   * when it publishes, so the two can never disagree. A tool plug-in's names
+   * one of Initiative's built-in widget types ('stat', 'progress', 'chart' and
+   * the rest), which Initiative checks.
    */
   type: Identifier;
   title?: string;
@@ -2380,13 +2384,36 @@ export interface BundledDashboardWidget {
     w?: number;
     h?: number;
   };
+  /**
+   * A built-in widget's options, as Initiative's own dashboard listings give
+   * them (a chart's 'mark'). Only a tool plug-in's tile has them, since only
+   * its type is a built-in widget; Initiative checks each against the widget.
+   */
+  options?: Record<string, string | number | boolean>;
+  /**
+   * Where the tile's data comes from. A service plug-in's tile names one of its
+   * own read endpoints ('endpoint_id', with 'params'). A tool plug-in has no
+   * endpoints: its tile is a query, {"source": "query", "sql": "…"}, over the
+   * plug-in's own tables.
+   */
   binding: {
     /**
      * One of this manifest's own read endpoint ids. Only a read answers with
      * something to draw.
      */
-    endpoint_id: NamespacedId;
+    endpoint_id?: NamespacedId;
     params?: Record<string, string | number | boolean>;
+    /**
+     * 'query' for a tool plug-in's tile, whose data is 'sql'. Left out for a
+     * service plug-in's, which names an endpoint.
+     */
+    source?: "query";
+    /**
+     * A tool plug-in's tile's query: a SELECT that reads only the plug-in's own
+     * tables, named p_<uid in lower case>_<key>. It runs as whoever views the
+     * dashboard, so it shows only rows they may already read.
+     */
+    sql?: string;
   };
 }
 
@@ -2797,8 +2824,9 @@ export interface Manifest {
    * 'service' for a plug-in that serves or calls something, container or
    * declarative: a declarative plug-in is one with no 'service' block. 'tool'
    * for a tool plug-in, which declares one tool in its 'tool' block and runs no
-   * code: beside the tool it carries only 'features' (exactly ['tool']),
-   * 'default_name', 'min_plugin_api', 'minimum_age', 'availability' and 'help'.
+   * code: beside the tool it carries only 'features' (['tool'], with
+   * 'dashboards' when it declares them), 'dashboards', 'default_name',
+   * 'min_plugin_api', 'minimum_age', 'availability' and 'help'.
    */
   plugin_kind: "service" | "tool";
   /**
@@ -2935,9 +2963,11 @@ export interface Manifest {
     return_path: Path;
   };
   /**
-   * Ready-made arrangements of this plug-in's own widgets. Publishing the
-   * plug-in publishes one ordinary dashboard listing per entry, offered to
-   * communities that install the plug-in.
+   * Ready-made dashboards that come with this plug-in. Publishing the plug-in
+   * publishes one ordinary dashboard listing per entry, offered to communities
+   * that install the plug-in. A service plug-in's arrange its own widgets, fed
+   * by its own read endpoints. A tool plug-in's are Initiative's built-in
+   * widgets, each drawing a query over the plug-in's own tables.
    */
   dashboards?: BundledDashboard[];
   /**

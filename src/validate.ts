@@ -1197,11 +1197,15 @@ function intervalProblems(every: string, where: string): ValidationProblem[] {
   return [{ where, message: `every is at least ${CAPS.scheduleMinMinutes}m and at most ${CAPS.scheduleMaxMinutes / 60}h` }];
 }
 
-/** What a tool plug-in carries beside its tool: it runs no code, so nothing that serves or calls. */
+/**
+ * What a tool plug-in carries beside its tool: it runs no code, so nothing that
+ * serves or calls. Its dashboards draw queries over its own tables.
+ */
 const TOOL_PLUGIN_TERMS: ReadonlySet<string> = new Set([
   "plugin_kind",
   "tool",
   "features",
+  "dashboards",
   "default_name",
   "min_plugin_api",
   "minimum_age",
@@ -1316,15 +1320,18 @@ function toolDefaultProblem(field: ToolField): string | undefined {
 }
 
 /**
- * A tool plug-in's terms. It carries its tool and the listing terms beside it,
- * and nothing that serves or calls; only a tool plug-in carries a tool. Its
+ * A tool plug-in's terms. It carries its tool, its dashboards and the listing
+ * terms beside it, and nothing that serves or calls; only a tool plug-in
+ * carries a tool, and only its dashboard tiles are queries. Its
  * keys are well formed, unique where they must be, and never a universal
  * column; its items sit under the tool or under an item that does; each
  * field's options, currency, counter and default fit its kind, and a required
  * field has a default; an open condition reads one of its item's fields of a
  * kind that fits it, and a check one of its table's; and every
  * action runs on the tool or an item, asks for that table's fields, and
- * writes an expression that parses.
+ * writes an expression that parses. Each dashboard tile is a query; which
+ * tables it reads and which widget draws it Initiative checks, since only it
+ * knows its built-in widgets and parses its query language.
  */
 function toolProblems(body: Manifest): ValidationProblem[] {
   const problems: ValidationProblem[] = [];
@@ -1332,19 +1339,40 @@ function toolProblems(body: Manifest): ValidationProblem[] {
 
   if (body.plugin_kind !== "tool") {
     if (body.tool !== undefined) push("/tool", "only a tool plug-in declares a tool: its plugin_kind is 'tool'");
+    (body.dashboards ?? []).forEach((dashboard, d) => {
+      dashboard.widgets.forEach((widget, w) => {
+        if (widget.binding.source !== undefined || widget.binding.sql !== undefined) {
+          push(`/dashboards/${d}/widgets/${w}/binding`, "a query tile is a tool plug-in's: this plug-in's tiles name its read endpoints");
+        }
+        if (widget.options !== undefined) {
+          push(`/dashboards/${d}/widgets/${w}/options`, "only a built-in widget, a tool plug-in's tile, has options");
+        }
+      });
+    });
     return problems;
   }
   for (const term of FIELDS.manifest) {
     if (body[term] !== undefined && !TOOL_PLUGIN_TERMS.has(term)) {
       push(
         `/${term}`,
-        "a tool plug-in runs no code: beside its tool it carries only features, default_name, min_plugin_api, minimum_age, availability and help"
+        "a tool plug-in runs no code: beside its tool it carries only features, dashboards, default_name, min_plugin_api, minimum_age, availability and help"
       );
     }
   }
-  if (body.features.length !== 1 || body.features[0] !== "tool") {
-    push("/features", "a tool plug-in's features are exactly ['tool']");
+  if (body.features.some((feature) => feature !== "tool" && feature !== "dashboards") || !body.features.includes("tool")) {
+    push("/features", "a tool plug-in's features are ['tool'], with 'dashboards' when it declares them");
   }
+  (body.dashboards ?? []).forEach((dashboard, d) => {
+    dashboard.widgets.forEach((widget, w) => {
+      const where = `/dashboards/${d}/widgets/${w}/binding`;
+      const binding = widget.binding;
+      if (binding.endpoint_id !== undefined || binding.params !== undefined) {
+        push(where, "a tool plug-in has no endpoints: its tile's binding is { source: 'query', sql }");
+      } else if (binding.source !== "query" || !binding.sql) {
+        push(where, "a tool plug-in's tile is a query: its binding is { source: 'query', sql }");
+      }
+    });
+  });
   const tool = body.tool;
   if (tool === undefined) {
     push("/tool", "a tool plug-in declares its tool");
