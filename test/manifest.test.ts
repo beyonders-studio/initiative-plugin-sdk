@@ -2056,9 +2056,66 @@ describe("a tool plug-in", () => {
     for (const term of ["service", "hosts", "fields"]) {
       expect(text).toContain(`/${term}: a tool plug-in runs no code: beside its tool it carries only`);
     }
-    expect(text).toContain("/features: a tool plug-in's features are exactly ['tool']");
+    expect(text).toContain("/features: a tool plug-in's features are ['tool'], with 'dashboards' when it declares them");
     // Neither a container's rules nor a declarative plug-in's are read.
     expect(text).not.toContain("declarative");
+  });
+
+  /** Counters with its board: one query tile over its own counters. */
+  const board = (binding: Record<string, unknown> = { source: "query", sql: "SELECT name, count FROM p_tsjvtcm0s7gv2x_counter" }) => ({
+    uid: "8V57MMR212TEY5",
+    public_id: "beyonders.counter-board",
+    name: "Counter board",
+    widgets: [{ id: "w1", type: "chart", options: { mark: "bar" }, binding }],
+  });
+
+  it("brings dashboards whose tiles are queries", () => {
+    const manifest = manifestOf({
+      publicId: "beyonders.counters",
+      uid: "TSJVTCM0S7GV2X",
+      name: "Counters",
+      tool: countersTool(),
+      dashboards: [board() as never],
+    });
+    expect(manifest.features).toEqual(["dashboards", "tool"]);
+    expect(manifest.dashboards![0].widgets[0].binding).toEqual({
+      source: "query",
+      sql: "SELECT name, count FROM p_tsjvtcm0s7gv2x_counter",
+    });
+    expect(messages(validateManifest(manifest))).toBe("");
+  });
+
+  it("refuses a tool plug-in's tile that names an endpoint or no query", () => {
+    const manifest = countersManifest();
+    manifest.features = ["dashboards", "tool"];
+    manifest.dashboards = [
+      board({ endpoint_id: "plugin.beyonders.counters.read" }),
+      board({ source: "query", sql: "SELECT 1", endpoint_id: "plugin.beyonders.counters.read" }),
+    ] as never;
+    const text = messages(validateManifest(manifest));
+    const refusal = "a tool plug-in has no endpoints: its tile's binding is { source: 'query', sql }";
+    expect(text).toContain(`/dashboards/0/widgets/0/binding: ${refusal}`);
+    expect(text).toContain(`/dashboards/1/widgets/0/binding: ${refusal}`);
+  });
+
+  it("refuses a query binding with no query, by the schema", () => {
+    const manifest = countersManifest();
+    manifest.features = ["dashboards", "tool"];
+    manifest.dashboards = [board({ source: "query" })] as never;
+    expect(validateManifest(manifest)).not.toEqual([]);
+  });
+
+  it("keeps query tiles and options to a tool plug-in", () => {
+    const service = {
+      ...base(),
+      features: ["dashboards"],
+      dashboards: [board()],
+    } as Manifest;
+    const text = messages(validateManifest(service));
+    expect(text).toContain(
+      "/dashboards/0/widgets/0/binding: a query tile is a tool plug-in's: this plug-in's tiles name its read endpoints"
+    );
+    expect(text).toContain("/dashboards/0/widgets/0/options: only a built-in widget, a tool plug-in's tile, has options");
   });
 
   it("is the only kind that carries a tool, and carries one", () => {

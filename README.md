@@ -1484,8 +1484,9 @@ export default definePlugin({
 });
 ```
 
-Its manifest's `plugin_kind` is `tool` and its `features` are `["tool"]`.
-Beside the tool it carries only `default_name`, `min_plugin_api`,
+Its manifest's `plugin_kind` is `tool` and its `features` are `["tool"]`, or
+`["dashboards", "tool"]` when it brings [dashboards](#a-tool-plug-ins-dashboards).
+Beside the tool it carries only `dashboards`, `default_name`, `min_plugin_api`,
 `minimum_age`, `availability` and `help`: no service, hosts, scopes,
 connections, endpoints, widgets, pages, fields, parts, actions, settings or
 permissions. Only a tool plug-in carries a `tool`.
@@ -1605,6 +1606,55 @@ permissions. Only a tool plug-in carries a `tool`.
   their `id`, or both. A null clears a field.
 
 `validateManifest` checks all of this.
+
+### A tool plug-in's dashboards
+
+A tool plug-in may bring dashboards over its own data, at most 8. Each is
+published as a dashboard listing of its own, offered to communities that
+installed the plug-in, and an initiative adds it like any other dashboard.
+Each tile is one of Initiative's built-in widgets (`stat`, `progress`, `chart`
+and the rest), and its binding is a query, `{ source: "query", sql }`, never an
+endpoint: a tool plug-in has none. Counters brings its Counter board:
+
+```ts
+dashboards: [
+  {
+    uid: "8V57MMR212TEY5",
+    public_id: "beyonders-studio.counter-board",
+    name: "Counter board",
+    description: "Your counters, front and center.",
+    layout: { columns: 12 },
+    widgets: [
+      {
+        id: "w1",
+        type: "stat",
+        title: "The headline number",
+        grid: { x: 0, y: 0, w: 4, h: 3 },
+        binding: { source: "query", sql: "SELECT name, count FROM p_tsjvtcm0s7gv2x_counter ORDER BY name" },
+      },
+      {
+        id: "w3",
+        type: "chart",
+        title: "The whole group",
+        grid: { x: 0, y: 3, w: 12, h: 4 },
+        options: { mark: "bar" },
+        binding: { source: "query", sql: "SELECT name, count FROM p_tsjvtcm0s7gv2x_counter ORDER BY count DESC" },
+      },
+    ],
+  },
+],
+```
+
+- **A query reads only the plug-in's own tables**, named `p_`, the plug-in's
+  uid in lower case, `_` and the table's key (`p_tsjvtcm0s7gv2x_counter`).
+  Initiative refuses a version whose query names anything else: a built-in
+  tool's table, another plug-in's or a shared one. A query is at most 20,000
+  characters.
+- **`type`** is a built-in widget and `options` its options (a chart's `mark`),
+  which Initiative checks against the widget.
+- **It runs as whoever views the dashboard**, read-only and with Initiative's
+  limits on time and rows, so a tile shows only rows its viewer may already
+  read.
 
 ## A private plug-in
 
