@@ -19,7 +19,10 @@ jobs:
       - run: npm ci --ignore-scripts
       # The contract is the source; the schema and the types are its output. A
       # contract edited without regenerating fails here rather than shipping a
-      # package whose types and schema disagree.
+      # package whose types and schema disagree. The registry's listing schema
+      # is compared with initiative-developer's main the same way, so a copy
+      # that has fallen behind the registry fails here rather than letting
+      # build --registry pass a listing the registry refuses.
       - run: npm run check:generated
       # What --ignore-scripts skipped: the dependencies' install scripts, then
       # the package's own prepare (generate, a no-op once checked, and build).

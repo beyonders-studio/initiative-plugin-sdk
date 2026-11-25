@@ -1,0 +1,614 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:initiative-registry:schema:listing",
+  "title": "Listing",
+  "description": "One listing: a plug-in or a piece of content. This is the file a pull request adds as sources/<publisher>/<uid>/listing.json. Paths are relative to that directory. A sha256 given on an asset is checked against the file it names; the build fills in any that are left out. The signed listing.json a client reads is the same document with every asset path rewritten to its target, every sha256 filled in, and each version's definition and example moved into its manifest target (entry.schema.json).",
+  "$ref": "#/$defs/listing_base",
+  "properties": {
+    "versions": {
+      "items": {
+        "$ref": "#/$defs/source_version"
+      }
+    }
+  },
+  "if": {
+    "required": [
+      "kind"
+    ],
+    "properties": {
+      "kind": {
+        "enum": [
+          "plugin",
+          "auto",
+          "profile_pack"
+        ]
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "versions": {
+        "items": {
+          "not": {
+            "required": [
+              "example"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "listing_base": {
+      "description": "What a source listing and a published entry share. Each narrows 'versions' to its own shape.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "uid",
+        "public_id",
+        "publisher",
+        "kind",
+        "name",
+        "summary",
+        "avatar",
+        "versions"
+      ],
+      "properties": {
+        "schema": {
+          "description": "The version of this format.",
+          "const": 1
+        },
+        "uid": {
+          "description": "The catalogue code: 14 characters of Crockford base32 without I, L, O or U. Assigned by the publisher, never reused.",
+          "type": "string",
+          "pattern": "^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{14}$"
+        },
+        "public_id": {
+          "description": "'<publisher>.<slug>'. The part before the first dot must equal publisher.",
+          "type": "string",
+          "maxLength": 120,
+          "pattern": "^[a-z0-9_-]+\\.[a-z0-9._-]+$"
+        },
+        "publisher": {
+          "description": "The publisher's prefix. Must have a record under publishers/.",
+          "type": "string",
+          "maxLength": 120,
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "kind": {
+          "description": "What is listed: a plug-in ('plugin'), an automation ('auto'), a pack of profile decorations ('profile_pack'), or one tool's content, named by the tool.",
+          "enum": [
+            "plugin",
+            "auto",
+            "profile_pack",
+            "calendar",
+            "counter_group",
+            "dashboard",
+            "file",
+            "post",
+            "project",
+            "queue",
+            "wiki"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "summary": {
+          "description": "One or two sentences shown on the listing's card.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "description": {
+          "description": "The longer text on the listing's page. Markdown.",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "avatar": {
+          "$ref": "#/$defs/asset"
+        },
+        "images": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/asset"
+              },
+              {
+                "required": [
+                  "alt"
+                ]
+              }
+            ]
+          }
+        },
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/version_base"
+          }
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        }
+      },
+      "allOf": [
+        {
+          "description": "A plug-in carries a registration.",
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "plugin"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "registration"
+            ]
+          }
+        },
+        {
+          "description": "Only a plug-in carries one.",
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "not": {
+                  "const": "plugin"
+                }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "registration"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "plugin_api_version": {
+      "description": "A plug-in API contract version, 'MAJOR.MINOR': the plug-in SDK release whose published spec a plug-in was built against.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "description": "A relative path inside the listing's directory.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._/-]+$"
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
+    },
+    "version_base": {
+      "description": "What every version gives, as a source and as published.",
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9][0-9a-z.+-]*$"
+        },
+        "min_app_version": {
+          "description": "The oldest Initiative release this version runs on.",
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9][0-9a-z.+-]*$"
+        },
+        "min_plugin_api": {
+          "description": "The oldest plug-in API contract this version needs, as the kit manifest's min_plugin_api gives it. Absent, the version runs on any contract.",
+          "$ref": "#/$defs/plugin_api_version"
+        },
+        "release_notes": {
+          "type": "string",
+          "maxLength": 5000
+        }
+      }
+    },
+    "document": {
+      "description": "A JSON object: a path to a JSON file inside the listing's directory, or the object inline.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/path"
+        },
+        {
+          "type": "object"
+        }
+      ]
+    },
+    "source_version": {
+      "description": "One version as the source gives it. The build publishes it as the target <version>/manifest.json: {uid, public_id, kind, definition, example?}.",
+      "$ref": "#/$defs/version_base",
+      "required": [
+        "definition"
+      ],
+      "properties": {
+        "definition": {
+          "description": "What installs. For a plug-in, its kit manifest: a container's names the listing's public_id as its service.public_id, and a declarative plug-in's has no service block. For a tool's content, that tool's definition.",
+          "$ref": "#/$defs/document"
+        },
+        "example": {
+          "description": "Optional, for a tool's content only: the filled-in example shown beside the listing.",
+          "$ref": "#/$defs/document"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "registration": {
+      "description": "For a plug-in (and allowed for an automation): what kind it is and the most it may ever be granted. A container names the image each deployment runs, and each deployment gives its location and the keys its copy signs with. A declarative plug-in names no image: Initiative runs it from its manifest. A tool plug-in names no image and asks for no scopes: it only declares a tool, which Initiative builds. A container may also carry a runtime, which lets a deployment run it on its own.",
+      "type": "object",
+      "required": [
+        "kind",
+        "scope_ceiling"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "container",
+            "declarative",
+            "tool"
+          ]
+        },
+        "image": {
+          "description": "A container's image, pinned by digest.",
+          "type": "string",
+          "maxLength": 300,
+          "pattern": "^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$"
+        },
+        "scope_ceiling": {
+          "description": "The scopes review cleared: Initiative's own ('projects:write'), a tool plug-in's tool's ('<key>.<uid>:read' or ':write', its kind, as Initiative names it: the tool's key, '.', the plug-in's uid in lower case), and 'plugins:<public_id>' for each plug-in it may call. A manifest may ask for less, never more.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^([a-z][a-z_]*:[a-z][a-z_]*|[a-z][a-z0-9_]{0,16}\\.[a-z0-9]{14}:(read|write)|plugins:[a-z0-9_-]+\\.[a-z0-9._-]+)$"
+          }
+        },
+        "compose": {
+          "$ref": "#/$defs/compose"
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "container"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "image"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "image"
+              ]
+            },
+            {
+              "required": [
+                "compose"
+              ]
+            },
+            {
+              "required": [
+                "runtime"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "compose": {
+      "description": "For a container: its Docker Compose service, as its publisher writes it, for an operator to add beside Initiative's own.",
+      "type": "object",
+      "required": [
+        "service",
+        "base_url"
+      ],
+      "properties": {
+        "service": {
+          "description": "A Docker Compose fragment, YAML text. Initiative fills two placeholders when it shows it: '${IMAGE}', the registration's image, and '${INITIATIVE_URL}', the deployment's public address. Any other '${' is refused.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?:[^$]|\\$(?!\\{)|\\$\\{(?:IMAGE|INITIATIVE_URL)\\})*$"
+        },
+        "base_url": {
+          "description": "Where the service answers on the Compose network, such as 'http://tracker:8080'. Initiative pre-fills the deployment's base URL with it.",
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\\s?#]*)?$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "description": "For a container a deployment runs for its operator: what the container is and what it needs, so infrastructure can run it without code of its own. Trust comes from here; where it runs, how big it is, and every key and password come from the deployment. Nothing here can raise a privilege: there is no field for resources, security context, service account, volumes, network rules, hostnames, command, or Secret names. The public target refuses any listing that names one.",
+      "type": "object",
+      "required": [
+        "name",
+        "port",
+        "health"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The plug-in's short name in a deployment: a DNS label, unique in a package. Object names derive from it.",
+          "type": "string",
+          "pattern": "^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$"
+        },
+        "port": {
+          "description": "The port the container serves HTTP on.",
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "health": {
+          "type": "object",
+          "required": [
+            "ready",
+            "live"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ready": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9._~/-]*$",
+              "description": "Answers 2xx when the container should receive traffic."
+            },
+            "live": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9._~/-]*$",
+              "description": "Answers 2xx while the process is alive."
+            },
+            "startup_seconds": {
+              "description": "How long it may take to first answer ready, migrations included.",
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 900
+            }
+          }
+        },
+        "stop_grace_seconds": {
+          "description": "How long it needs to drain after SIGTERM.",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 300
+        },
+        "migrates_on_start": {
+          "description": "It changes its database schema as it starts, so two copies must never start together.",
+          "type": "boolean"
+        },
+        "pages": {
+          "description": "It serves pages Initiative frames, at an origin of its own the deployment gives it.",
+          "type": "boolean"
+        },
+        "public_paths": {
+          "description": "Paths outside callers reach on the deployment's shared plug-in host.",
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^/[A-Za-z0-9._~/-]*$"
+          }
+        },
+        "facts": {
+          "description": "Environment variables the deployment fills with what it knows about itself. app_url: Initiative's public URL. app_origin: its origin. app_api_public / app_api_internal: its API, from outside or from inside the cluster. page_origin: this plug-in's own origin (needs pages). port: the port above. entitlement_issuer_key: billing's Ed25519 public key (SPKI PEM) that signs entitlement statements; absent when the deployment runs no billing.",
+          "type": "object",
+          "maxProperties": 20,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "enum": [
+              "app_url",
+              "app_origin",
+              "app_api_public",
+              "app_api_internal",
+              "page_origin",
+              "port",
+              "entitlement_issuer_key"
+            ]
+          }
+        },
+        "settings": {
+          "description": "Environment variables only the operator can fill, by name. A required one left unset stops the deployment.",
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": [
+              "env"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "env": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "signing_key": {
+          "description": "Where the private key its copy signs with goes. The deployment makes the key and registers its public half.",
+          "type": "object",
+          "required": [
+            "env"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+            }
+          }
+        },
+        "database": {
+          "description": "Its own Postgres, which the deployment runs, backs up and gives one login per role.",
+          "type": "object",
+          "required": [
+            "roles",
+            "provision_sql"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "min_major": {
+              "type": "integer",
+              "minimum": 14,
+              "maximum": 40
+            },
+            "dsn_scheme": {
+              "type": "string",
+              "enum": [
+                "postgresql",
+                "postgresql+asyncpg",
+                "postgresql+psycopg",
+                "postgres"
+              ]
+            },
+            "roles": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "login",
+                  "env"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9]{0,15}$"
+                  },
+                  "login": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                  },
+                  "env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  }
+                }
+              }
+            },
+            "provision_sql": {
+              "description": "A file in the image, run once per change as the database owner with psql, given each role's password as the variable <id>_password. It must be idempotent.",
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9._/-]+\\.sql$"
+            }
+          }
+        },
+        "secrets": {
+          "description": "Values the deployment generates once and keeps.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "env"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,31}$"
+              },
+              "kind": {
+                "enum": [
+                  "random_alnum_32",
+                  "random_bytes_32",
+                  "hex_32",
+                  "ed25519_private_key_pem"
+                ]
+              },
+              "env": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+              }
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "required": [
+            "path",
+            "token_env"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^/[A-Za-z0-9._~/-]*$"
+            },
+            "token_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}
