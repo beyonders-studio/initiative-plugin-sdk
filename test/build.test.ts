@@ -429,6 +429,41 @@ describe("the registry source", () => {
     expect(text).toContain("listing images: screens/avatar.png has the same file name as another picture");
   });
 
+  it("carries a tool plug-in's scope in its ceiling, as the registry names it", async () => {
+    write({ "src/plugin.ts": plugin("", 'scopeCeiling: ["projects:read", "counter_group.tsjvtcm0s7gv2x:read"],') });
+    expect(await run({ registry: "registry" })).toBe(0);
+    const listing = JSON.parse(
+      readFileSync(join(root, "registry", "acme", "K7M2QX8N4TVB9C", "listing.json"), "utf-8")
+    );
+    expect(listing.registration.scope_ceiling).toEqual(["projects:read", "counter_group.tsjvtcm0s7gv2x:read"]);
+  });
+
+  it("refuses a listing the registry's schema would refuse, and writes nothing", async () => {
+    write({ "src/plugin.ts": plugin("", 'scopeCeiling: ["projects:read", "counter_group.tsjvtcm0s7gv2x:admin"],') });
+    expect(await run({ registry: "registry" })).toBe(1);
+    expect(errors.join("")).toContain("listing.json/registration/scope_ceiling/1: must match pattern");
+    expect(existsSync(join(root, "registry"))).toBe(false);
+    expect(existsSync(join(root, "manifest.json"))).toBe(false);
+
+    errors.length = 0;
+    write({ "src/plugin.ts": plugin().replace('summary: "Tickets.",', "") });
+    expect(await run({ registry: "registry" })).toBe(1);
+    expect(errors.join("")).toContain("listing.json: must have required property 'summary'");
+    expect(existsSync(join(root, "registry"))).toBe(false);
+    expect(existsSync(join(root, "manifest.json"))).toBe(false);
+  });
+
+  it("refuses such a listing between releases too, and in a check", async () => {
+    write({
+      "package.json": JSON.stringify({ name: "tracker", version: "1.3.0" }),
+      "src/plugin.ts": plugin("", 'scopeCeiling: ["counter_group.tsjvtcm0s7gv2x:admin"],'),
+    });
+    expect(await run({ registry: "registry" })).toBe(1);
+    expect(existsSync(join(root, "manifest.json"))).toBe(false);
+    expect(await run({ registry: "registry", check: true })).toBe(1);
+    expect(errors.join("")).toContain("listing.json/registration/scope_ceiling/0: must match pattern");
+  });
+
   it("is left as it was between releases", async () => {
     write({ "package.json": JSON.stringify({ name: "tracker", version: "1.3.0" }) });
     expect(await run({ registry: "registry" })).toBe(0);

@@ -10,7 +10,10 @@
  *   `<version>/manifest.json`, the avatar and any images. It is written
  *   only while the listing names the package's own version: between releases
  *   the package runs ahead of its listing, and what the listing already
- *   publishes is left as it was.
+ *   publishes is left as it was. Whether it is written or not, `listing.json`
+ *   is first held to the registry's own schema, vendored as
+ *   `schemas/registry-listing.json`: a listing the registry would refuse
+ *   fails the build, and nothing is written.
  *
  * With `--check` nothing is written, and any file that differs from what would
  * be written is a failure.
@@ -34,6 +37,7 @@ import { CAPS } from "./contract.js";
 import { ENTITLEMENT_ISSUER_KEY_ENV, ENTITLEMENT_ISSUER_KEY_FACT } from "./statements.js";
 import { manifestOf, type AnyPlugin, type ListingDeclaration, type RuntimeDeclaration } from "./define.js";
 import type { Manifest } from "./contract.js";
+import { registryListingProblems } from "./registry-listing.js";
 import { validateManifest } from "./validate.js";
 
 export interface BuildOptions {
@@ -184,12 +188,20 @@ export async function build(options: BuildOptions): Promise<number> {
       options.manifest === undefined
         ? (JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { version: string }).version
         : listing.version;
+    const avatar = readFileSync(resolve(root, listing.avatar));
+    const images = (listing.images ?? []).map((image) => readFileSync(resolve(root, image.path)));
+    const listed = listingSource(plugin, avatar, images);
+    // Held to the registry's schema between releases too, so a listing it
+    // would refuse fails the plug-in's own builds before it is released.
+    const refused = registryListingProblems(listed);
+    if (refused.length) {
+      for (const problem of refused) process.stderr.write(`${problem}\n`);
+      return 1;
+    }
     if (version === listing.version) {
-      const avatar = readFileSync(resolve(root, listing.avatar));
-      const images = (listing.images ?? []).map((image) => readFileSync(resolve(root, image.path)));
       const source = resolve(root, options.registry, listing.publisher, plugin.uid);
       outputs.push(
-        [join(source, "listing.json"), `${JSON.stringify(listingSource(plugin, avatar, images), null, 2)}\n`],
+        [join(source, "listing.json"), `${JSON.stringify(listed, null, 2)}\n`],
         [join(source, listing.version, "manifest.json"), manifestText],
         [join(source, "assets", basename(listing.avatar)), avatar],
         ...(listing.images ?? []).map(
@@ -345,7 +357,9 @@ const PATH = /^\/[A-Za-z0-9._~/-]*$/;
 
 /**
  * The registry's rules for a runtime that a build can see by itself: names,
- * the port, paths and variable names. The registry checks the rest.
+ * the port, paths and variable names, said in the definition's terms on every
+ * build. With `--registry`, the written listing is also held to the registry's
+ * schema itself ({@link registryListingProblems}); the registry checks the rest.
  */
 function runtimeProblems(runtime: RuntimeDeclaration, entitled: boolean): string[] {
   const problems: string[] = [];

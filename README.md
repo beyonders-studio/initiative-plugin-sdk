@@ -1095,6 +1095,17 @@ while `listing.version` is the package's own version: between releases the
 package runs ahead of its listing, and a new version is listed at its release,
 with its image's digest. The registry's CI checks and signs what is merged.
 
+Before anything is written, `listing.json` is held to the registry's own
+schema, which this package carries as `schemas/registry-listing.json`. The
+build's other listing checks speak in your definition's terms (`baseUrl`,
+`scopeCeiling`); this one reads the file the registry will read, so a listing
+the registry would refuse when a package pins it (a scope it does not
+recognise, a field it requires) fails the build instead, with each problem at
+its place in the file, such as
+`listing.json/registration/scope_ceiling/1: must match pattern …`, and
+nothing is written. It runs between releases too, while the listing is not
+written, so the plug-in's own CI finds the problem before its release does.
+
 A plug-in written in another language builds its manifest itself and hands the
 SDK a JSON file in place of `src/plugin.ts`: its `publicId`, `uid` and `name`,
 its `manifest`, and its `listing` as declared above. The manifest is checked as
@@ -1723,6 +1734,24 @@ so), and a tool plug-in's terms. The deployment also enforces byte-size caps.
 may say. `schemas/plugin-manifest.json` and `src/contract.ts` (its types) are
 generated from it with `npm run generate`; `npm run check:generated` fails when
 either is stale. Initiative vendors the contract from this repository's tags.
+
+## The registry's listing schema
+
+The registry decides what a listing may say, in
+`registry/schema/listing.schema.json` in beyonders-studio/initiative-developer.
+`schemas/registry-listing.json` is a copy of it, never edited here, so
+`build --registry` checks a listing with the registry's rules rather than a
+restatement of them that can fall behind. Take it again when the registry's
+schema changes:
+
+```sh
+npm run sync:registry-schema                                  # from the registry's main
+npm run sync:registry-schema -- --from ../initiative-developer/registry/schema/listing.schema.json
+```
+
+`npm run check:generated` compares the copy with the registry's main and
+fails when they differ, so a change to the registry's schema shows up in this
+repository's CI until the copy is taken and released.
 
 ## The plug-in API contract
 

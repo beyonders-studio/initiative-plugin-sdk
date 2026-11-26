@@ -81,8 +81,9 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
     "generate": "node scripts/generate.mjs",
-    "check:generated": "node scripts/generate.mjs --check && node scripts/generate-plugin-api.mjs --check",
-    "generate:plugin-api": "node scripts/generate-plugin-api.mjs"
+    "check:generated": "node scripts/generate.mjs --check && node scripts/generate-plugin-api.mjs --check && node scripts/sync-registry-schema.mjs --check",
+    "generate:plugin-api": "node scripts/generate-plugin-api.mjs",
+    "sync:registry-schema": "node scripts/sync-registry-schema.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",
